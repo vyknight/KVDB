@@ -36,7 +36,7 @@ private:
      * Calculate memory footprint of KV pair
      * Includes size of key, value, and struct overhead
      */
-    [[nodiscard]] size_t calculate_entry_size(const std::string& key, const std::string& value) const;
+    [[nodiscard]] static size_t calculate_entry_size(const std::string& key, const std::string& value) ;
 
 public:
     /**
@@ -106,7 +106,7 @@ public:
     /**
      * Set iterator to beginning for range scans
      */
-    [[nodiscard]] std::map<std::string, Entry>::const_iterator start() const;
+    [[nodiscard]] std::map<std::string, Entry>::const_iterator begin() const;
 
     /**
      *Get iterator to end for range scans
@@ -143,10 +143,10 @@ public:
 
     [[nodiscard]] Stats get_stats() const;
 
-    void reset_stats();
+    void reset_stats() const;
 
 private:
-    Stats stats_;
+    mutable Stats stats_;
 
 };
 
