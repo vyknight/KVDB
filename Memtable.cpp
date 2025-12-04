@@ -112,7 +112,7 @@ bool Memtable::contains(const std::string& key) const
 bool Memtable::is_deleted(const std::string& key) const
 {
     const auto it = table_.find(key);
-    return it != table_.end() && !it->second.is_deleted;
+    return it != table_.end() && it->second.is_deleted;
 }
 
 // Get current size in bytes
@@ -139,6 +139,7 @@ void Memtable::clear()
     current_size_ = 0;
     table_.clear();
     stats_.flushes++;
+    stats_.operations++;
 }
 
 // Get all entries and in sorted order for flushing
