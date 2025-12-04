@@ -20,36 +20,60 @@ public:
     SSTableReader(const SSTableReader&) = delete;
     SSTableReader& operator=(const SSTableReader&) = delete;
 
+    // Move support
+    SSTableReader(SSTableReader&& other) noexcept;
+    SSTableReader& operator=(SSTableReader&& other) noexcept;
+
     /**
      * Get val for a key using binary search
      * @return Value if found and not deleted, empty optional otherwise
      */
-    std::optional<std::string> get(const std::string& key) const;
+    [[nodiscard]] std::optional<std::string> get(const std::string& key) const;
 
     /**
      * Check if key exists (and not deleted)
      */
-    bool contains(std::string& key) const;
+    [[nodiscard]] bool contains(const std::string& key) const;
 
     /**
      * Check if key exists and is marked deleted
      */
-    bool is_deleted(const std::string& key) const;
+    [[nodiscard]] bool is_deleted(const std::string& key) const;
 
     /**
      * Get number of entries in SSTable
      */
-    size_t size() const;
+    [[nodiscard]] size_t size() const;
 
     /**
      * Get filename
      */
-    const std::string& get_filename() const;
+    [[nodiscard]] const std::string& get_filename() const;
 
     /**
      * Validate SSTable file format
      */
-    bool is_valid() const;
+    [[nodiscard]] bool is_valid() const;
+
+    /**
+     * Get approximate memory usage of loaded SSTable
+     */
+    [[nodiscard]] size_t memory_usage() const;
+
+    /**
+     * Get all keys for debugging or testing
+     */
+    [[nodiscard]] std::vector<std::string> get_all_keys() const;
+
+    /**
+     * Get minimum key
+     */
+    [[nodiscard]] std::string min_key() const;
+
+    /**
+     * Get maximum key
+     */
+    [[nodiscard]] std::string max_key() const;
 
 private:
     struct KeyEntry
@@ -58,6 +82,10 @@ private:
         uint64_t value_offset;
         uint32_t value_length;
         bool is_deleted;
+
+        // for sorting and binary search
+        bool operator<(const std::string& other) const { return key < other; }
+        bool operator==(const std::string& other) const { return key == other; }
     };
 
     std::string filename_;
@@ -69,12 +97,14 @@ private:
     /**
      * Binary search for key in key entries
      */
-    int binary_search(const std::string& key) const;
+    [[nodiscard]] int binary_search(const std::string& key) const;
 
     /**
      * Load SSTable file
      */
     bool load();
+
+    [[nodiscard]] std::string read_value(const KeyEntry& entry) const;
 };
 
 #endif //KVDB_SSTABLEREADER_H
