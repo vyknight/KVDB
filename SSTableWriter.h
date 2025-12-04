@@ -50,11 +50,11 @@ public:
      */
     static bool write_from_memtable(const std::string& filename, const Memtable& memtable);
 
-private:
     // Constants
     static constexpr uint64_t MAGIC = 0x4B5644425F535354;  // "KVDB_SST" in hexcode
     static constexpr uint32_t VERSION = 1;
 
+private:
     /**
      * Calculate total size needed for SSTable
      */
