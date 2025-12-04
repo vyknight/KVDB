@@ -8,4 +8,10 @@ add_executable(KVDB main.cpp
         Memtable.h
         Tests/test_memtable.cpp
         Tests/test_memtable.h
+        SSTableWriter.cpp
+        SSTableWriter.h
+        SSTableReader.cpp
+        SSTableReader.h
+        Tests/test_sstable_writer.cpp
+        Tests/test_sstable_writer.h
 )

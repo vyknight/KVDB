@@ -237,4 +237,3 @@ void Memtable::reset_stats() const
 {
     stats_ = {};
 }
-
