@@ -5,13 +5,12 @@
 #include "test_sstable_writer.h"
 #include "../Memtable.h"
 #include "../SSTableWriter.h"
+#include "../SSTableReader.h"
 #include <iostream>
 #include <fstream>
-// #include <cassert>
 #include <vector>
 #include <string>
 #include <filesystem>
-// #include <cstdint>
 #include <chrono>
 
 namespace fs = std::filesystem;
@@ -118,25 +117,27 @@ bool test_sstable_write_with_tombstones()
     if (size == 0)
     {
         std::cerr << "SSTable with tombstone File size is zero" << std::endl;
-        fs::remove(filename);
+        if (fs::exists(filename)) fs::remove(filename);
         return false;
     }
 
     // should have 3 entries
-    std::ifstream file(filename, std::ios::binary);
-    if (!file)
+    uint32_t entry_count = 0;
     {
-        std::cerr << "Unable to open SSTable with tombstone file" << std::endl;
-        fs::remove(filename);
-        return false;
-    }
+        std::ifstream file(filename, std::ios::binary);
+        if (!file)
+        {
+            std::cerr << "Unable to open SSTable with tombstone file" << std::endl;
+            if (fs::exists(filename)) fs::remove(filename);
+            return false;
+        }
 
-    // read header
-    file.seekg(8+4);  // skip magic and version
-    uint32_t entry_count;
-    file.read(reinterpret_cast<char*>(&entry_count), sizeof(entry_count));
+        // read header
+        file.seekg(8+4);  // skip magic and version
+        file.read(reinterpret_cast<char*>(&entry_count), sizeof(entry_count));
+    }  // file closes here
 
-    fs::remove(filename);
+    if (fs::exists(filename)) fs::remove(filename);
     return entry_count == 3;
 }
 
@@ -168,14 +169,14 @@ bool test_sstable_write_large_data()
     }
 
     const auto size = fs::file_size(filename);
-    std::cout << "Large SSTable written, size: " << size << " bytes (" << size / 1024 << " KB) in "
+    std::cout << "  Large SSTable written, size: " << size << " bytes (" << size / 1024 << " KB) in "
         << duration.count() << "ms" << std::endl;
 
     fs::remove(filename);
     return true;
 }
 
-// Test 5: verify entries are writen in sorted order
+// Test 5: verify entries are written in sorted order
 bool test_sstable_write_sorted_order()
 {
     Memtable mt(4096);
@@ -190,19 +191,55 @@ bool test_sstable_write_sorted_order()
 
     if (!SSTableWriter::write_from_memtable(filename, mt))
     {
-        // at this point if there's issues with writing memtables we should've already caught them
         return false;
     }
 
-    // TODO: FINISH THIS TEST ONCE SST READER IS FINISHED
+    // Use SSTableReader to verify the order
+    SSTableReader reader(filename);
 
-    if (!fs::exists(filename))
-    {
+    if (!reader.is_valid()) {
+        std::cerr << "Failed to load SSTable for sorted order verification" << std::endl;
+        fs::remove(filename);
         return false;
+    }
+
+    // Get all keys
+    auto keys = reader.get_all_keys();
+
+    // Should be sorted
+    bool sorted = true;
+    for (size_t i = 1; i < keys.size(); ++i) {
+        if (keys[i - 1] >= keys[i]) {
+            std::cerr << "Keys not sorted: '" << keys[i-1] << "' >= '" << keys[i] << "'" << std::endl;
+            sorted = false;
+        }
+    }
+
+    // Verify specific order: apple, banana, carrot, zebra
+    if (keys.size() == 4) {
+        if (keys[0] != "apple" || keys[1] != "banana" ||
+            keys[2] != "carrot" || keys[3] != "zebra") {
+            std::cerr << "Keys not in expected order" << std::endl;
+            sorted = false;
+        }
+    }
+
+    // Also verify values are correct
+    bool values_correct = true;
+    auto apple_val = reader.get("apple");
+    if (!apple_val.has_value() || apple_val.value() != "fruit") {
+        std::cerr << "Apple value incorrect" << std::endl;
+        values_correct = false;
+    }
+
+    auto zebra_val = reader.get("zebra");
+    if (!zebra_val.has_value() || zebra_val.value() != "animal") {
+        std::cerr << "Zebra value incorrect" << std::endl;
+        values_correct = false;
     }
 
     fs::remove(filename);
-    return true;
+    return sorted && values_correct;
 }
 
 // Test 6: verify file format
@@ -220,15 +257,57 @@ bool test_sstable_write_file_verification()
         return false;
     }
 
-    // TODO: FINISH THIS TEST ONCE SST READER IS FINISHED
+    // Use SSTableReader to verify the file
+    SSTableReader reader(filename);
 
-    if (!fs::exists(filename))
-    {
+    if (!reader.is_valid()) {
+        std::cerr << "Failed to load SSTable for verification" << std::endl;
+        fs::remove(filename);
         return false;
     }
 
+    // Verify basic properties
+    if (reader.size() != 2) {
+        std::cerr << "Expected 2 entries, got " << reader.size() << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    // Verify keys exist and have correct values
+    auto val1 = reader.get("test1");
+    auto val2 = reader.get("test2");
+
+    bool success = true;
+
+    if (!val1.has_value() || val1.value() != "value1") {
+        std::cerr << "Key 'test1' has incorrect value" << std::endl;
+        success = false;
+    }
+
+    if (!val2.has_value() || val2.value() != "value2") {
+        std::cerr << "Key 'test2' has incorrect value" << std::endl;
+        success = false;
+    }
+
+    // Verify min/max keys
+    if (reader.min_key() != "test1") {
+        std::cerr << "Min key should be 'test1', got '" << reader.min_key() << "'" << std::endl;
+        success = false;
+    }
+
+    if (reader.max_key() != "test2") {
+        std::cerr << "Max key should be 'test2', got '" << reader.max_key() << "'" << std::endl;
+        success = false;
+    }
+
+    // Verify header with our helper
+    if (!verify_sstable_header(filename)) {
+        std::cerr << "Header verification failed" << std::endl;
+        success = false;
+    }
+
     fs::remove(filename);
-    return true;
+    return success;
 }
 
 // Test 7: Edge cases
@@ -258,8 +337,48 @@ bool test_sstable_write_edge_cases()
         return false;
     }
 
+    // Verify with SSTableReader
+    const SSTableReader reader(filename);
+
+    if (!reader.is_valid()) {
+        std::cerr << "Failed to load edge case SSTable" << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    // Verify all entries exist
+    bool success = true;
+
+    // Check empty key
+    auto empty_key_val = reader.get("");
+    if (!empty_key_val.has_value() || !empty_key_val.value().empty()) {
+        std::cerr << "Empty key value incorrect" << std::endl;
+        success = false;
+    }
+
+    // Check empty value
+    auto empty_val = reader.get("empty_value");
+    if (!empty_val.has_value() || !empty_val.value().empty()) {
+        std::cerr << "Empty value incorrect" << std::endl;
+        success = false;
+    }
+
+    // Check newlines
+    auto newline_val = reader.get("key\nwith\nnewlines");
+    if (!newline_val.has_value() || newline_val.value() != "value\nwith\nnewlines") {
+        std::cerr << "Newline value incorrect" << std::endl;
+        success = false;
+    }
+
+    // Check tabs
+    auto tab_val = reader.get("key\twith\ttabs");
+    if (!tab_val.has_value() || tab_val.value() != "value\twith\ttabs") {
+        std::cerr << "Tab value incorrect" << std::endl;
+        success = false;
+    }
+
     fs::remove(filename);
-    return true;
+    return success;
 }
 
 // Test 8: Performance test (optional)
@@ -294,9 +413,30 @@ bool test_sstable_write_performance() {
               << duration.count() << " ms ("
               << (NUM_ENTRIES * 1000.0 / duration.count()) << " entries/sec)" << std::endl;
 
+    // Optional: Verify the file can be read
+    SSTableReader reader(filename);
+    if (!reader.is_valid()) {
+        std::cerr << "Performance test: written SSTable is invalid" << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    // Quick spot check of a few entries
+    bool read_success = true;
+    for (int i = 0; i < 10; i++) {
+        std::string key = "user_" + std::to_string(i) + "_name";
+        std::string expected = "value_" + std::to_string(i) + "_" + std::string(50, 'x');
+        auto val = reader.get(key);
+        if (!val.has_value() || val.value() != expected) {
+            std::cerr << "Performance test: verification failed for key " << key << std::endl;
+            read_success = false;
+            break;
+        }
+    }
+
     // Clean up
     fs::remove(filename);
-    return true;
+    return read_success;
 }
 
 // Helper function implementations
@@ -339,13 +479,13 @@ int sstable_writer_tests_main() {
 
     for (const auto& [name, test_func] : tests) {
         try {
-            bool result = test_func();
+            const bool result = test_func();
             print_test_result_sstable_writer(name, result);
             if (result) passed++;
         } catch (const std::exception& e) {
-            std::cout << name << " (Exception: " << e.what() << ")" << std::endl;
+            std::cout << "X " << name << " (Exception: " << e.what() << ")" << std::endl;
         } catch (...) {
-            std::cout << name << " (Unknown exception)" << std::endl;
+            std::cout << "X " << name << " (Unknown exception)" << std::endl;
         }
     }
 

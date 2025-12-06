@@ -13,7 +13,7 @@
 class SSTableReader
 {
 public:
-    explicit SSTableReader(const std::string& filename);
+    explicit SSTableReader(std::string  filename);
     ~SSTableReader();
 
     // no copying

@@ -33,8 +33,10 @@
 // File format consts
 namespace
 {
-    constexpr size_t HEADER_SIZE = 24;  // magic + version + entry count + data offset
-    constexpr size_t KEY_ENTRY_HEADER_SIZE = 13;  // key len + value offset + value len + tombstone
+    // should be 24
+    constexpr size_t HEADER_SIZE = sizeof(uint64_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint64_t);
+    // should be 17
+    constexpr size_t KEY_ENTRY_HEADER_SIZE = sizeof(uint32_t) + sizeof(uint64_t) + sizeof(uint32_t) + sizeof(uint8_t);
 }
 
 bool SSTableWriter::write(const std::string& filename,
@@ -50,7 +52,7 @@ bool SSTableWriter::write(const std::string& filename,
     try
     {
         // header
-        const uint32_t entry_count = static_cast<uint32_t>(entries.size());
+        const auto entry_count = static_cast<uint32_t>(entries.size());
 
         // calculate data section offset
         uint64_t data_offset = HEADER_SIZE;
@@ -72,14 +74,14 @@ bool SSTableWriter::write(const std::string& filename,
         for (const auto& [key, entry] : entries)
         {
             // write key len
-            uint32_t key_len = static_cast<uint32_t>(key.size());
+            auto key_len = static_cast<uint32_t>(key.size());
             file.write(reinterpret_cast<const char*>(&key_len), sizeof(key_len));
             // write key
             file.write(key.data(), key_len);
             // write value offset
             file.write(reinterpret_cast<const char*>(&current_value_offset), sizeof(current_value_offset));
             // write value len
-            uint32_t value_len = static_cast<uint32_t>(entry.value.size());
+            auto value_len = static_cast<uint32_t>(entry.value.size());
             file.write(reinterpret_cast<const char*>(&value_len), sizeof(value_len));
             // write tombstone
             uint8_t tombstone = entry.is_deleted ? 1 : 0;
