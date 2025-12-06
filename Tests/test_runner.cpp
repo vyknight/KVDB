@@ -7,6 +7,7 @@
 #include "test_sstable_writer.h"
 #include "test_sstable_reader.h"
 #include "test_wal.h"
+#include "test_kvstore.h"
 
 void run_tests()
 {
@@ -14,4 +15,5 @@ void run_tests()
     sstable_writer_tests_main();
     sstable_reader_tests_main();
     wal_tests_main();
+    kvstore_tests_main();
 }

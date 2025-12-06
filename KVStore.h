@@ -93,6 +93,11 @@ public:
     KVStore(KVStore&&) = default;
     KVStore& operator=(KVStore&&) = default;
 
+    // closing fix
+    ~KVStore() {
+        close();
+    }
+
 private:
     /**
      * Private constructor that uses the public static open() method

@@ -4,7 +4,7 @@
 #include <string>
 
 // Test utilities
-void print_test_result(const std::string& test_name, bool passed);
+void print_test_result_kvstore(const std::string& test_name, bool passed);
 
 // Test functions
 bool test_basic_operations();

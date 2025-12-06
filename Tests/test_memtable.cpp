@@ -9,7 +9,7 @@
 #include <string>
 #include <random>
 
-void print_test_result(const std::string& test_name, const bool passed)
+void print_test_result_memtable(const std::string& test_name, const bool passed)
 {
     std::cout << (passed ? "O " : "X ") << test_name << std::endl;
 }
@@ -373,7 +373,7 @@ int memtable_tests_main()
         try
         {
             const bool result = test_func();
-            print_test_result(name, result);
+            print_test_result_memtable(name, result);
             if (result) passed++;
         } catch (const std::exception& e)
         {

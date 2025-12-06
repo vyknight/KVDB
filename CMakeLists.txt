@@ -24,4 +24,6 @@ add_executable(KVDB main.cpp
         Tests/test_wal.h
         KVStore.cpp
         KVStore.h
+        Tests/test_kvstore.cpp
+        Tests/test_kvstore.h
 )
