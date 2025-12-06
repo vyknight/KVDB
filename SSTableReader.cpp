@@ -96,7 +96,7 @@ bool SSTableReader::load()
             return false;
         }
 
-        if (data_offset >= static_cast<uint64_t>(file_size))
+        if (data_offset > static_cast<uint64_t>(file_size))
         {
             std::cerr << "Invalid data offset in " << filename_
                       << ": " << data_offset << " >= " << file_size << std::endl;

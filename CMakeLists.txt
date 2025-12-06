@@ -14,4 +14,8 @@ add_executable(KVDB main.cpp
         SSTableReader.h
         Tests/test_sstable_writer.cpp
         Tests/test_sstable_writer.h
+        Tests/test_sstable_reader.cpp
+        Tests/test_sstable_reader.h
+        Tests/test_runner.cpp
+        Tests/test_runner.h
 )
