@@ -22,4 +22,6 @@ add_executable(KVDB main.cpp
         WriteAheadLog.h
         Tests/test_wal.cpp
         Tests/test_wal.h
+        KVStore.cpp
+        KVStore.h
 )

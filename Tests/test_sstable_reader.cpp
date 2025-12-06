@@ -389,8 +389,8 @@ bool test_reader_large_sstable() {
     auto lookup_duration = duration_cast<microseconds>(lookup_end - lookup_start);
 
     std::cout << "  " << NUM_LOOKUPS << " random lookups: "
-              << lookup_duration.count() << " µs ("
-              << (lookup_duration.count() / (double)NUM_LOOKUPS) << " µs/lookup)" << std::endl;
+              << lookup_duration.count() << " microseconds ("
+              << (lookup_duration.count() / (double)NUM_LOOKUPS) << " microseconds/lookup)" << std::endl;
 
     // Test memory usage
     size_t mem_usage = reader.memory_usage();
@@ -609,6 +609,400 @@ bool validate_reader_memory_usage(const std::string& filename) {
     return true;
 }
 
+// Test for SSTableReader range scan functionality
+bool test_sstable_reader_scan_range_basic() {
+    Memtable mt(4096);
+
+    // Insert keys in alphabetical order
+    mt.put("apple", "fruit");
+    mt.put("banana", "yellow fruit");
+    mt.put("carrot", "vegetable");
+    mt.put("date", "sweet fruit");
+    mt.put("eggplant", "purple vegetable");
+    mt.put("fig", "small fruit");
+    mt.put("grape", "bunch fruit");
+
+    const std::string filename = "test_scan_range_basic.sst";
+
+    if (!SSTableWriter::write_from_memtable(filename, mt)) {
+        std::cerr << "  Failed to write SSTable" << std::endl;
+        return false;
+    }
+
+    SSTableReader reader(filename);
+    if (!reader.is_valid()) {
+        std::cerr << "  Failed to create valid SSTableReader" << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    // Test 1: Full range
+    auto results = reader.scan_range("a", "z");
+    if (results.size() != 7) {
+        std::cerr << "  Test 1 failed: Expected 7 entries, got " << results.size() << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    // Test 2: Subrange from "c" to "ez" (to include eggplant which starts with 'e')
+    // Note: "eggplant" > "e", so we need a bound that's >= "eggplant"
+    results = reader.scan_range("c", "ez");
+    if (results.size() != 3) {
+        std::cerr << "  Test 2 failed: Expected 3 entries (c to ez), got " << results.size() << std::endl;
+        for (const auto& [key, value] : results) {
+            std::cerr << "    Found: " << key << std::endl;
+        }
+        fs::remove(filename);
+        return false;
+    }
+
+    // Check specific entries
+    bool found_carrot = false, found_date = false, found_eggplant = false;
+    for (const auto& [key, value] : results) {
+        if (key == "carrot" && value == "vegetable") found_carrot = true;
+        if (key == "date" && value == "sweet fruit") found_date = true;
+        if (key == "eggplant" && value == "purple vegetable") found_eggplant = true;
+    }
+
+    if (!found_carrot || !found_date || !found_eggplant) {
+        std::cerr << "  Test 2 failed: Missing expected entries" << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    // Test 3: Single key range
+    results = reader.scan_range("banana", "banana");
+    if (results.size() != 1 || results[0].first != "banana" || results[0].second != "yellow fruit") {
+        std::cerr << "  Test 3 failed: Single key range failed" << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    // Test 4: Empty range (no keys in range)
+    results = reader.scan_range("h", "i");
+    if (!results.empty()) {
+        std::cerr << "  Test 4 failed: Expected empty range, got " << results.size() << " entries" << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    // Test 5: Range starting before first key
+    results = reader.scan_range("a", "c");
+    // This should include: apple, banana
+    // carrot > c in lexicographical order
+    if (results.size() != 2) {
+        std::cerr << "  Test 5 failed: Expected 2 entries (a-c), got " << results.size() << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    // Test 6: Range ending after last key
+    results = reader.scan_range("g", "z");
+    // This should include: grape
+    if (results.size() != 1 || results[0].first != "grape") {
+        std::cerr << "  Test 6 failed: Expected 1 entry (grape), got " << results.size() << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    fs::remove(filename);
+    return true;
+}
+
+bool test_sstable_reader_scan_range_with_deletes() {
+    Memtable mt(4096);
+
+    mt.put("apple", "fruit");
+    mt.put("banana", "yellow fruit");
+    mt.put("carrot", "vegetable");
+    mt.remove("banana");  // Delete banana
+    mt.put("date", "sweet fruit");
+    mt.put("eggplant", "purple vegetable");
+
+    const std::string filename = "test_scan_range_deletes.sst";
+
+    if (!SSTableWriter::write_from_memtable(filename, mt)) {
+        std::cerr << "  Failed to write SSTable" << std::endl;
+        return false;
+    }
+
+    SSTableReader reader(filename);
+    if (!reader.is_valid()) {
+        std::cerr << "  Failed to create valid SSTableReader" << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    // Test 1: Range that includes a deleted key
+    auto results = reader.scan_range("a", "z");
+    // Should have 4 entries (apple, carrot, date, eggplant) - banana deleted
+    if (results.size() != 4) {
+        std::cerr << "  Test 1 failed: Expected 4 entries (excluding deleted), got " << results.size() << std::endl;
+        for (const auto& [key, value] : results) {
+            std::cerr << "    " << key << ": " << value << std::endl;
+        }
+        fs::remove(filename);
+        return false;
+    }
+
+    // Verify banana is not in results
+    for (const auto& [key, value] : results) {
+        if (key == "banana") {
+            std::cerr << "  Test 1 failed: Deleted key 'banana' found in results" << std::endl;
+            fs::remove(filename);
+            return false;
+        }
+    }
+
+    // Test 2: Get deleted key directly
+    auto deleted_value = reader.get("banana");
+    if (deleted_value.has_value()) {
+        std::cerr << "  Test 2 failed: Deleted key should return empty optional" << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    // Test 3: Check is_deleted for deleted key
+    if (!reader.is_deleted("banana")) {
+        std::cerr << "  Test 3 failed: is_deleted should return true for deleted key" << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    fs::remove(filename);
+    return true;
+}
+
+bool test_sstable_reader_scan_range_edge_cases() {
+    Memtable mt(4096);
+
+    // Insert keys with various patterns
+    mt.put("a", "first");
+    mt.put("aa", "double a");
+    mt.put("ab", "a b");
+    mt.put("b", "second");
+    mt.put("ba", "b a");
+    mt.put("c", "third");
+
+    const std::string filename = "test_scan_range_edge.sst";
+
+    if (!SSTableWriter::write_from_memtable(filename, mt)) {
+        std::cerr << "  Failed to write SSTable" << std::endl;
+        return false;
+    }
+
+    SSTableReader reader(filename);
+    if (!reader.is_valid()) {
+        std::cerr << "  Failed to create valid SSTableReader" << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    // Test 1: Empty string range
+    auto results = reader.scan_range("", "");
+    // Should get everything starting with empty string? Actually "" < "a", so nothing
+    // This behavior depends on how you want to handle empty strings
+    // For now, we'll accept whatever the binary search gives us
+
+    // Test 2: Range with special boundaries
+    results = reader.scan_range("a", "b");
+    // Should include: a, aa, ab, b (inclusive)
+    if (results.size() != 4) {
+        std::cerr << "  Test 2 failed: Expected 4 entries (a-aa-ab-b), got " << results.size() << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    // Test 3: Partial prefix match
+    results = reader.scan_range("aa", "ab");
+    // Should include: aa, ab
+    if (results.size() != 2) {
+        std::cerr << "  Test 3 failed: Expected 2 entries (aa, ab), got " << results.size() << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    // Test 4: Non-existent start key
+    results = reader.scan_range("ac", "az");
+    // Should be empty (no keys between ac and az)
+    if (!results.empty()) {
+        std::cerr << "  Test 4 failed: Expected empty range, got " << results.size() << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    // Test 5: Same start and end with no matching key
+    results = reader.scan_range("xyz", "xyz");
+    if (!results.empty()) {
+        std::cerr << "  Test 5 failed: Expected empty for non-existent single key" << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    fs::remove(filename);
+    return true;
+}
+
+bool test_sstable_reader_scan_range_performance() {
+    Memtable mt(10 * 1024 * 1024);  // 10MB memtable
+
+    // Insert 1000 keys with zero-padded indices
+    const int NUM_KEYS = 1000;
+    for (int i = 0; i < NUM_KEYS; i++) {
+        // Zero-pad to 4 digits
+        std::string index = std::to_string(i);
+        index = std::string(4 - index.length(), '0') + index;
+        std::string key = "key_" + index;
+        std::string value = "value_" + std::string(100, 'x');  // 100-byte values
+        mt.put(key, value);
+    }
+
+    const std::string filename = "test_scan_range_perf.sst";
+
+    auto start_write = std::chrono::high_resolution_clock::now();
+    if (!SSTableWriter::write_from_memtable(filename, mt)) {
+        std::cerr << "  Failed to write SSTable" << std::endl;
+        return false;
+    }
+    auto end_write = std::chrono::high_resolution_clock::now();
+
+    SSTableReader reader(filename);
+    if (!reader.is_valid()) {
+        std::cerr << "  Failed to create valid SSTableReader" << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    // Performance test: multiple range scans
+    auto start_scan = std::chrono::high_resolution_clock::now();
+
+    const int NUM_SCANS = 100;
+    std::srand(static_cast<unsigned>(std::time(nullptr)));
+
+    for (int scan = 0; scan < NUM_SCANS; scan++) {
+        // Random ranges within the data
+        int start_idx = std::rand() % (NUM_KEYS - 100);
+        int end_idx = start_idx + std::rand() % 100;
+
+        // Zero-pad the keys for the range
+        std::string start_index = std::to_string(start_idx);
+        start_index = std::string(4 - start_index.length(), '0') + start_index;
+        std::string start_key = "key_" + start_index;
+
+        std::string end_index = std::to_string(end_idx);
+        end_index = std::string(4 - end_index.length(), '0') + end_index;
+        std::string end_key = "key_" + end_index;
+
+        auto results = reader.scan_range(start_key, end_key);
+
+        // Verify we got the expected number of results
+        int expected_count = end_idx - start_idx + 1;
+        if (results.size() != static_cast<size_t>(expected_count)) {
+            std::cerr << "  Performance test: Expected " << expected_count
+                      << " entries for range [" << start_idx << ", " << end_idx
+                      << "], got " << results.size() << std::endl;
+            // Debug: print first few keys
+            for (int i = 0; i < std::min(5, static_cast<int>(results.size())); i++) {
+                std::cerr << "    " << results[i].first << std::endl;
+            }
+            fs::remove(filename);
+            return false;
+        }
+    }
+
+    auto end_scan = std::chrono::high_resolution_clock::now();
+
+    auto write_time = std::chrono::duration_cast<std::chrono::milliseconds>(end_write - start_write);
+    auto scan_time = std::chrono::duration_cast<std::chrono::milliseconds>(end_scan - start_scan);
+
+    std::cout << "  Write time: " << write_time.count() << "ms for " << NUM_KEYS << " entries" << std::endl;
+    std::cout << "  Scan time: " << scan_time.count() << "ms for " << NUM_SCANS << " range scans" << std::endl;
+    std::cout << "  Average scan time: " << (scan_time.count() * 1000.0 / NUM_SCANS) << " microseconds" << std::endl;
+
+    // Test single exact match vs range scan
+    start_scan = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < 1000; i++) {
+        reader.get("key_0500");  // zero-padded key for 500
+    }
+    end_scan = std::chrono::high_resolution_clock::now();
+    auto get_time = std::chrono::duration_cast<std::chrono::microseconds>(end_scan - start_scan);
+
+    std::cout << "  1000 point get time: " << get_time.count() << " microseconds" << std::endl;
+    std::cout << "  Average point get: " << (get_time.count() / 1000.0) << " microseconds" << std::endl;
+
+    fs::remove(filename);
+    return true;
+}
+
+bool test_sstable_reader_scan_range_order() {
+    Memtable mt(4096);
+
+    // Insert keys in non-alphabetical order
+    mt.put("zebra", "animal");
+    mt.put("apple", "fruit");
+    mt.put("monkey", "animal");
+    mt.put("banana", "fruit");
+    mt.put("carrot", "vegetable");
+
+    const std::string filename = "test_scan_range_order.sst";
+
+    if (!SSTableWriter::write_from_memtable(filename, mt)) {
+        std::cerr << "  Failed to write SSTable" << std::endl;
+        return false;
+    }
+
+    SSTableReader reader(filename);
+    if (!reader.is_valid()) {
+        std::cerr << "  Failed to create valid SSTableReader" << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    // Test: Results should be in sorted order regardless of insertion order
+    auto results = reader.scan_range("a", "z");
+
+    if (results.size() != 4) {
+        std::cerr << "  Expected 4 entries, got " << results.size() << std::endl;
+        // Debug: print all keys in reader
+        auto all_keys = reader.get_all_keys();
+        std::cerr << "  All keys in SSTable: ";
+        for (const auto& key : all_keys) {
+            std::cerr << key << " ";
+        }
+        std::cerr << std::endl;
+        fs::remove(filename);
+        return false;
+    }
+
+    // Check order
+    for (size_t i = 1; i < results.size(); i++) {
+        if (results[i-1].first >= results[i].first) {
+            std::cerr << "  Results not in sorted order at position " << i
+                      << ": " << results[i-1].first << " >= " << results[i].first << std::endl;
+            // Print all results for debugging
+            for (size_t j = 0; j < results.size(); j++) {
+                std::cerr << "    [" << j << "] " << results[j].first << std::endl;
+            }
+            fs::remove(filename);
+            return false;
+        }
+    }
+
+    // Verify specific order
+    std::vector<std::string> expected_order = {"apple", "banana", "carrot", "monkey", "zebra"};
+    for (size_t i = 0; i < results.size(); i++) {
+        if (results[i].first != expected_order[i]) {
+            std::cerr << "  Position " << i << ": expected " << expected_order[i]
+                      << ", got " << results[i].first << std::endl;
+            fs::remove(filename);
+            return false;
+        }
+    }
+
+    fs::remove(filename);
+    return true;
+}
+
 // Main test runner
 int sstable_reader_tests_main() {
     std::cout << "Running SSTable Reader Tests" << std::endl;
@@ -624,7 +1018,12 @@ int sstable_reader_tests_main() {
         {"Min/Max Keys", test_reader_min_max_keys},
         {"File Not Found", test_reader_file_not_found},
         {"Corrupted File", test_reader_corrupted_file},
-        {"Unsorted Keys", test_reader_unsorted_keys}
+        {"Unsorted Keys", test_reader_unsorted_keys},
+        {"Range Scan Basic", test_sstable_reader_scan_range_basic},
+        {"Range Scan with Deletes", test_sstable_reader_scan_range_with_deletes},
+        {"Range Scan Edge Cases", test_sstable_reader_scan_range_edge_cases},
+        {"Range Scan Performance", test_sstable_reader_scan_range_performance},
+        {"Range Scan Order", test_sstable_reader_scan_range_order}
     };
 
     int passed = 0;

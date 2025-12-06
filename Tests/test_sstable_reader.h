@@ -26,6 +26,11 @@ bool test_reader_min_max_keys();
 bool test_reader_file_not_found();
 bool test_reader_corrupted_file();
 bool test_reader_unsorted_keys();
+bool test_sstable_reader_scan_range_basic();
+bool test_sstable_reader_scan_range_with_deletes();
+bool test_sstable_reader_scan_range_edge_cases();
+bool test_sstable_reader_scan_range_performance();
+bool test_sstable_reader_scan_range_order();
 
 // Helper functions
 bool validate_reader_memory_usage(const std::string& filename);

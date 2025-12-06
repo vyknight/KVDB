@@ -329,6 +329,54 @@ std::string SSTableReader::max_key() const {
     return key_entries_.back().key;
 }
 
+// range scan of keys
+std::vector<std::pair<std::string, std::string>>
+SSTableReader::scan_range(const std::string& start_key, const std::string& end_key) const {
+    std::vector<std::pair<std::string, std::string>> results;
+
+    if (!valid_ || key_entries_.empty()) return results;
+
+    // Find first key >= start_key
+    int left = 0;
+    int right = static_cast<int>(key_entries_.size()) - 1;
+    int start_idx = -1;
+
+    // Binary search for lower bound (first key >= start_key)
+    while (left <= right) {
+        int mid = left + (right - left) / 2;
+        const std::string& mid_key = key_entries_[mid].key;
+
+        if (mid_key >= start_key) {
+            start_idx = mid;
+            right = mid - 1;  // Look for earlier occurrence
+        } else {
+            left = mid + 1;
+        }
+    }
+
+    // If no key >= start_key found, return empty
+    if (start_idx == -1) {
+        return results;
+    }
+
+    // Scan from start_idx until key > end_key (or end of array)
+    for (int i = start_idx; i < static_cast<int>(key_entries_.size()); ++i) {
+        const auto& entry = key_entries_[i];
+
+        // Stop if we've passed the end of the range
+        if (entry.key > end_key) {
+            break;
+        }
+
+        // Skip deleted entries
+        if (!entry.is_deleted) {
+            results.emplace_back(entry.key, read_value(entry));
+        }
+    }
+
+    return results;
+}
+
 std::string SSTableReader::read_value(const KeyEntry& entry) const
 {
     if (!value_data_ || key_entries_.empty()) {

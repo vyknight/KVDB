@@ -75,6 +75,14 @@ public:
      */
     [[nodiscard]] std::string max_key() const;
 
+    /**
+     * Scans the SSTable for entries with keys in the range
+     * @param start_key inclusive
+     * @param end_key inclusive
+     * @return vector with range of matching entries
+     */
+    [[nodiscard]] std::vector<std::pair<std::string, std::string>> scan_range(const std::string& start_key, const std::string& end_key) const;
+
 private:
     struct KeyEntry
     {
