@@ -10,7 +10,6 @@
 #include <optional>
 #include <memory>
 #include "BufferPool.h"
-#include "DirectIO.h"
 
 class SSTableReader
 {
@@ -132,8 +131,7 @@ private:
 
     // buffer pool implementation
     static std::unique_ptr<BufferPool> buffer_pool_;
-    [[nodiscard]] std::string read_value_with_buffer_pool(const KeyEntry& entry) const;
-    std::unique_ptr<DirectIO> direct_io_;
+    std::string read_value_with_buffer_pool(const KeyEntry& entry) const;
 };
 
 #endif //KVDB_SSTABLEREADER_H
