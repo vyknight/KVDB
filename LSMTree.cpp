@@ -139,7 +139,7 @@ std::optional<std::string> LSMTree::get(const std::string& key) {
         auto memtable_value = memtable_.get(key);
         if (memtable_value) {
             // Check if it's a tombstone
-            if (is_tombstone(*memtable_value)) {
+            if (memtable_.is_deleted(key)) {
                 return std::nullopt;  // Key is deleted
             }
             return memtable_value;
@@ -241,7 +241,7 @@ bool LSMTree::flush_memtable() {
             return true;
         }
 
-        std::cout << "[DEBUG] Flushing memtable with " << entries.size() << " entries" << std::endl;
+        // std::cout << "[DEBUG] Flushing memtable with " << entries.size() << " entries" << std::endl;
 
         // 2. Generate temporary SSTable filename
         uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -264,7 +264,7 @@ bool LSMTree::flush_memtable() {
             return false;
         }
 
-        std::cout << "[DEBUG] Created SSTable with " << sstable->size() << " entries" << std::endl;
+        // std::cout << "[DEBUG] Created SSTable with " << sstable->size() << " entries" << std::endl;
 
         // 5. Add to LevelManager
         if (!level_manager_->add_sstable_level0(sstable)) {
@@ -274,7 +274,7 @@ bool LSMTree::flush_memtable() {
             return false;
         }
 
-        std::cout << "[DEBUG] Added SSTable to LevelManager" << std::endl;
+        // std::cout << "[DEBUG] Added SSTable to LevelManager" << std::endl;
 
         // 6. Clear memtable and WAL
         memtable_.clear();
@@ -371,7 +371,7 @@ void LSMTree::trigger_compaction() {
             stats_.compactions++;
 
             // Print level status after compaction
-            level_manager_->print_levels();
+            // level_manager_->print_levels();
         }
 
     } catch (const std::exception& e) {

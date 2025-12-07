@@ -58,6 +58,8 @@ public:
     // New: Get LevelManager for debugging
     void print_levels() const;
 
+    bool flush_memtable();
+
 private:
     // Core components
     Memtable memtable_;
@@ -88,7 +90,7 @@ private:
     void recover_from_wal();
 
     // Memtable operations
-    bool flush_memtable();
+
     bool should_flush_memtable() const;
 
     // Compaction operations

@@ -241,44 +241,105 @@ std::vector<LevelManager::SSTablePtr> LevelManager::find_candidate_sstables(cons
     std::vector<SSTablePtr> candidates;
     std::lock_guard<std::recursive_mutex> lock(levels_mutex_);
 
+    // For debugging
+    // std::cout << "\n[DEBUG] === find_candidate_sstables for key: '" << key << "' ===" << std::endl;
+
+    // Print all levels for debugging
+    for (int level = 0; level < static_cast<int>(levels_.size()); level++) {
+        const auto& sstables = levels_[level].sstables;
+        if (sstables.empty()) continue;
+
+        // std::cout << "[DEBUG] Level " << level << " has " << sstables.size() << " SSTables:" << std::endl;
+        for (size_t i = 0; i < sstables.size(); i++) {
+            const auto& sst = sstables[i];
+            // std::cout << "[DEBUG]   SSTable " << i << ": [" << sst->min_key()
+            //           << " - " << sst->max_key() << "] entries: " << sst->size() << std::endl;
+        }
+    }
+
     // Search from level 0 (newest) to highest level (oldest)
     for (int level = 0; level < static_cast<int>(levels_.size()); level++) {
         const auto& sstables = levels_[level].sstables;
+        if (sstables.empty()) continue;
+
+        // std::cout << "[DEBUG] Searching level " << level << "..." << std::endl;
+
+        bool found_in_level = false;
 
         if (level == 0) {
-            // Level 0: SSTables may have overlapping key ranges
-            // Need to check all SSTables in reverse chronological order (newest first)
+            // Level 0: Check all SSTables (they can have overlapping ranges)
+            // Check in reverse order (newest first)
             for (auto it = sstables.rbegin(); it != sstables.rend(); ++it) {
                 const auto& sstable = *it;
-                // Check if key is in this SSTable's range
-                if (key >= sstable->min_key() && key <= sstable->max_key()) {
+
+                // More precise check: first compare with min_key, then with max_key
+                bool ge_min = (key.compare(sstable->min_key()) >= 0);
+                bool le_max = (key.compare(sstable->max_key()) <= 0);
+
+                // std::cout << "[DEBUG]   Checking SSTable: [" << sstable->min_key()
+                //           << " - " << sstable->max_key() << "]" << std::endl;
+                // std::cout << "[DEBUG]     key.compare(min) >= 0: " << ge_min
+                //           << ", key.compare(max) <= 0: " << le_max << std::endl;
+
+                if (ge_min && le_max) {
+                    // std::cout << "[DEBUG]     ✓ Key is in range! Adding to candidates" << std::endl;
                     candidates.push_back(sstable);
+                    found_in_level = true;
+                } else {
+                    // std::cout << "[DEBUG]     ✗ Key is NOT in range" << std::endl;
                 }
             }
         } else {
-            // Higher levels: SSTables have non-overlapping key ranges
-            // Use binary search to find the right SSTable
-            // Find first SSTable where max_key >= key
-            auto it = std::lower_bound(sstables.begin(), sstables.end(), key,
-                [](const SSTablePtr& sst, const std::string& k) {
-                    return sst->max_key() < k;
-                });
+            // Higher levels: Use binary search since ranges don't overlap
+            // First, check if key is within the overall range of this level
+            if (key.compare(sstables.front()->min_key()) < 0 ||
+                key.compare(sstables.back()->max_key()) > 0) {
+                // std::cout << "[DEBUG]   Key is outside level " << level << " overall range ["
+                          // << sstables.front()->min_key() << " - " << sstables.back()->max_key() << "]" << std::endl;
+                continue;
+            }
 
-            if (it != sstables.end()) {
-                const auto& sstable = *it;
-                // Check if key is in this SSTable's range
-                if (key >= sstable->min_key() && key <= sstable->max_key()) {
+            // Binary search to find the SSTable that might contain the key
+            size_t low = 0, high = sstables.size() - 1;
+            while (low <= high) {
+                size_t mid = low + (high - low) / 2;
+                const auto& sstable = sstables[mid];
+
+                // std::cout << "[DEBUG]   Binary search: checking SSTable " << mid
+                          // << " [" << sstable->min_key() << " - " << sstable->max_key() << "]" << std::endl;
+
+                if (key.compare(sstable->max_key()) > 0) {
+                    // Key is greater than this SSTable's max, search right
+                    // std::cout << "[DEBUG]     key > max, searching right" << std::endl;
+                    low = mid + 1;
+                } else if (key.compare(sstable->min_key()) < 0) {
+                    // Key is less than this SSTable's min, search left
+                    // std::cout << "[DEBUG]     key < min, searching left" << std::endl;
+                    high = mid - 1;
+                } else {
+                    // Key is within this SSTable's range
+                    // std::cout << "[DEBUG]     ✓ Found containing SSTable!" << std::endl;
                     candidates.push_back(sstable);
+                    found_in_level = true;
+                    break;
                 }
             }
         }
 
-        // If we found candidates in this level, we can stop
-        // (because newer levels have more recent data)
-        if (!candidates.empty()) {
+        // LSM tree semantics: stop at the first level where we find a candidate
+        // (newer data overrides older data)
+        if (found_in_level) {
+            // std::cout << "[DEBUG] Found candidates in level " << level << ", stopping search" << std::endl;
             break;
         }
     }
+
+    // std::cout << "[DEBUG] Returning " << candidates.size() << " candidates" << std::endl;
+    for (size_t i = 0; i < candidates.size(); i++) {
+        // std::cout << "[DEBUG]   Candidate " << i << ": [" << candidates[i]->min_key()
+                  // << " - " << candidates[i]->max_key() << "]" << std::endl;
+    }
+    // std::cout << "[DEBUG] === End find_candidate_sstables ===\n" << std::endl;
 
     return candidates;
 }
