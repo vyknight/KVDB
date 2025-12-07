@@ -12,6 +12,7 @@
 #include "test_buffer_pool.h"
 // #include "test_lsm.h"
 #include "test_compaction.h"
+#include "test_level_manager.h"
 
 void run_tests()
 {
@@ -23,5 +24,6 @@ void run_tests()
     // page_tests_main();
     // bufferpool_tests_main();
     // lsm_tests_main();
-    compaction_tests_main();
+    // compaction_tests_main();
+    level_manager_tests_main();
 }

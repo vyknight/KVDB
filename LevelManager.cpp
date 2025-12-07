@@ -76,7 +76,7 @@ void LevelManager::initialize_levels() {
 }
 
 void LevelManager::load_existing_sstables() {
-    std::lock_guard<std::mutex> lock(levels_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(levels_mutex_);
 
     for (int level = 0; level < static_cast<int>(levels_.size()); level++) {
         std::string level_dir = data_directory_ + "/level_" + std::to_string(level);
@@ -114,7 +114,7 @@ void LevelManager::load_existing_sstables() {
 }
 
 bool LevelManager::add_sstable_level0(SSTablePtr sstable) {
-    std::lock_guard<std::mutex> lock(levels_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(levels_mutex_);
 
     // Generate new filename with sequence number
     uint64_t seq = levels_[0].next_sstable_id++;
@@ -149,7 +149,7 @@ bool LevelManager::add_sstable_level0(SSTablePtr sstable) {
 }
 
 std::optional<LevelManager::CompactionTask> LevelManager::get_compaction_task() {
-    std::lock_guard<std::mutex> lock(levels_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(levels_mutex_);
 
     // Check level 0 first (highest priority)
     if (should_compact_level0() && !levels_[0].sstables.empty()) {
@@ -194,7 +194,7 @@ std::optional<LevelManager::CompactionTask> LevelManager::get_compaction_task() 
 void LevelManager::replace_sstables(int source_level,
                                   const std::vector<SSTablePtr>& old_sstables,
                                   const std::vector<SSTablePtr>& new_sstables) {
-    std::lock_guard<std::mutex> lock(levels_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(levels_mutex_);
 
     if (source_level < 0 || source_level >= static_cast<int>(levels_.size())) {
         std::cerr << "Invalid source level: " << source_level << std::endl;
@@ -239,7 +239,7 @@ void LevelManager::replace_sstables(int source_level,
 
 std::vector<LevelManager::SSTablePtr> LevelManager::find_candidate_sstables(const std::string& key) {
     std::vector<SSTablePtr> candidates;
-    std::lock_guard<std::mutex> lock(levels_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(levels_mutex_);
 
     // Search from level 0 (newest) to highest level (oldest)
     for (int level = 0; level < static_cast<int>(levels_.size()); level++) {
@@ -286,7 +286,7 @@ std::vector<LevelManager::SSTablePtr> LevelManager::find_candidate_sstables(cons
 std::vector<LevelManager::SSTablePtr> LevelManager::find_sstables_for_range(const std::string& start_key,
                                                                            const std::string& end_key) {
     std::vector<SSTablePtr> candidates;
-    std::lock_guard<std::mutex> lock(levels_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(levels_mutex_);
 
     // For range queries, we need to check all levels
     for (int level = 0; level < static_cast<int>(levels_.size()); level++) {
@@ -320,7 +320,7 @@ std::vector<LevelManager::SSTablePtr> LevelManager::find_sstables_for_range(cons
 }
 
 LevelManager::Stats LevelManager::get_stats() const {
-    std::lock_guard<std::mutex> lock(levels_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(levels_mutex_);
 
     if (stats_dirty_) {
         update_stats();
@@ -354,7 +354,7 @@ void LevelManager::update_stats() const {
 }
 
 size_t LevelManager::get_sstable_count(int level) const {
-    std::lock_guard<std::mutex> lock(levels_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(levels_mutex_);
 
     if (level < 0 || level >= static_cast<int>(levels_.size())) {
         return 0;
@@ -364,7 +364,7 @@ size_t LevelManager::get_sstable_count(int level) const {
 }
 
 size_t LevelManager::get_total_sstable_count() const {
-    std::lock_guard<std::mutex> lock(levels_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(levels_mutex_);
 
     size_t total = 0;
     for (const auto& level : levels_) {
@@ -375,7 +375,7 @@ size_t LevelManager::get_total_sstable_count() const {
 }
 
 void LevelManager::print_levels() const {
-    std::lock_guard<std::mutex> lock(levels_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(levels_mutex_);
 
     std::cout << "\n=== Level Manager Status ===" << std::endl;
 

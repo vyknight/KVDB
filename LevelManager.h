@@ -118,7 +118,7 @@ private:
     std::vector<Level> levels_;
 
     // State
-    mutable std::mutex levels_mutex_;
+    mutable std::recursive_mutex levels_mutex_;
     std::atomic<uint64_t> global_sequence_{0};
 
     // Private methods
