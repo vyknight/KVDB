@@ -34,4 +34,12 @@ add_executable(KVDB main.cpp
         DirectIO.h
         BufferPool.cpp
         BufferPool.h
+        Tests/test_pageid.h
+        Tests/test_pageid.cpp
+        Tests/test_page.cpp
+        Tests/test_page.h
+        Tests/test_directio.cpp
+        Tests/test_directio.h
+        Tests/test_bufferpool.cpp
+        Tests/test_bufferpool.h
 )
