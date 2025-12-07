@@ -13,13 +13,10 @@
 #include <thread>
 #include <functional>
 
+#include "test_helper.h"
+
 namespace fs = std::filesystem;
 using namespace std::chrono;
-
-// Helper functions
-void print_test_result(const std::string& test_name, const bool passed) {
-    std::cout << (passed ? "O " : "X ") << test_name << std::endl;
-}
 
 std::string generate_test_db_name(const std::string& test_name) {
     // Use a timestamp to make it unique

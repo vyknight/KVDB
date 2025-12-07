@@ -36,4 +36,13 @@ add_executable(KVDB main.cpp
         Tests/test_page.h
         Tests/test_buffer_pool.cpp
         Tests/test_buffer_pool.h
+        LSMTree.cpp
+        LSMTree.h
+        LevelManager.cpp
+        LevelManager.h
+        Compactor.cpp
+        Compactor.h
+        Tests/test_lsm.cpp
+        Tests/test_lsm.h
+        Tests/test_helper.h
 )

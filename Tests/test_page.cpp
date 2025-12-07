@@ -5,9 +5,7 @@
 #include <cstring>
 #include <vector>
 
-void print_test_result_page(const std::string& test_name, bool passed) {
-    std::cout << (passed ? "O " : "X ") << test_name << std::endl;
-}
+#include "test_helper.h"
 
 // Test 1: Basic construction and properties
 bool test_page_construction() {
@@ -323,7 +321,7 @@ int page_tests_main() {
         std::cout << "\n" << name << "..." << std::endl;
         try {
             bool result = test_func();
-            print_test_result_page("", result);
+            print_test_result("", result);
             if (result) passed++;
         } catch (const std::exception& e) {
             std::cout << "X Exception: " << e.what() << std::endl;

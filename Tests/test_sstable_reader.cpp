@@ -15,12 +15,10 @@
 #include <cstring>
 #include <random>
 
+#include "test_helper.h"
+
 namespace fs = std::filesystem;
 using namespace std::chrono;
-
-void print_test_result_reader(const std::string& test_name, bool passed) {
-    std::cout << (passed ? "O " : "X ") << test_name << std::endl;
-}
 
 // Test 1: Basic reading operations
 bool test_reader_basic_operations() {
@@ -1032,7 +1030,7 @@ int sstable_reader_tests_main() {
     for (const auto& [name, test_func] : tests) {
         try {
             bool result = test_func();
-            print_test_result_reader(name, result);
+            print_test_result(name, result);
             if (result) passed++;
         } catch (const std::exception& e) {
             std::cout << "X " << name << " (Exception: " << e.what() << ")" << std::endl;

@@ -7,9 +7,7 @@
 #include <memory>
 #include <thread>
 
-void print_test_result_bufferpool(const std::string& test_name, bool passed) {
-    std::cout << (passed ? "O " : "X ") << test_name << std::endl;
-}
+#include "test_helper.h"
 
 // Helper to create test pages
 std::unique_ptr<Page> create_test_page(const std::string& filename, uint64_t offset, 
@@ -583,7 +581,7 @@ int bufferpool_tests_main() {
         std::cout << "\n" << name << "..." << std::endl;
         try {
             bool result = test_func();
-            print_test_result_bufferpool("", result);
+            print_test_result("", result);
             if (result) passed++;
         } catch (const std::exception& e) {
             std::cout << "X Exception: " << e.what() << std::endl;

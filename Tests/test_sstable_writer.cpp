@@ -13,13 +13,10 @@
 #include <filesystem>
 #include <chrono>
 
+#include "test_helper.h"
+
 namespace fs = std::filesystem;
 using namespace std::chrono;
-
-void print_test_result_sstable_writer(const std::string& test_name, const bool passed)
-{
-    std::cout << (passed ? "O " : "X ") << test_name << std::endl;
-}
 
 // Test 1: Basic write
 bool test_sstable_write_basic()
@@ -480,7 +477,7 @@ int sstable_writer_tests_main() {
     for (const auto& [name, test_func] : tests) {
         try {
             const bool result = test_func();
-            print_test_result_sstable_writer(name, result);
+            print_test_result(name, result);
             if (result) passed++;
         } catch (const std::exception& e) {
             std::cout << "X " << name << " (Exception: " << e.what() << ")" << std::endl;

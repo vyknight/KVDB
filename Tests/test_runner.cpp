@@ -10,6 +10,7 @@
 #include "test_kvstore.h"
 #include "test_page.h"
 #include "test_buffer_pool.h"
+#include "test_lsm.h"
 
 void run_tests()
 {
@@ -20,4 +21,5 @@ void run_tests()
     kvstore_tests_main();
     page_tests_main();
     bufferpool_tests_main();
+    lsm_tests_main();
 }

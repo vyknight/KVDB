@@ -17,17 +17,10 @@
 #include <cstring>
 #include <functional>
 
+#include "test_helper.h"
+
 namespace fs = std::filesystem;
 using namespace std::chrono;
-
-// Helper to create test paths
-std::string make_test_path(const std::string& test_dir, const std::string& filename) {
-    return (fs::path(test_dir) / filename).string();
-}
-
-void print_test_result_wal(const std::string& test_name, bool passed) {
-    std::cout << (passed ? "O " : "X ") << test_name << std::endl;
-}
 
 // Test 1: Basic operations
 bool test_wal_basic_operations(const std::string& test_dir) {
@@ -639,7 +632,7 @@ int wal_tests_main() {
     for (const auto& [name, test_func] : tests) {
         try {
             bool result = test_func(test_dir);
-            print_test_result_wal(name, result);
+            print_test_result(name, result);
             if (result) passed++;
         } catch (const std::exception& e) {
             std::cout << name << " (Exception: " << e.what() << ")" << std::endl;
