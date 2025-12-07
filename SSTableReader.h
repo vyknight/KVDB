@@ -9,6 +9,7 @@
 #include <vector>
 #include <optional>
 #include <memory>
+#include "BufferPool.h"
 
 class SSTableReader
 {
@@ -83,6 +84,20 @@ public:
      */
     [[nodiscard]] std::vector<std::pair<std::string, std::string>> scan_range(const std::string& start_key, const std::string& end_key) const;
 
+    /**
+     * Sets a static buffer pool that's shared and used by every reader
+     * @param pool a BufferPool object
+     */
+    static void set_buffer_pool(std::unique_ptr<BufferPool> pool)
+    {
+        buffer_pool_ = std::move(pool);
+    }
+
+    static BufferPool* get_buffer_pool()
+    {
+        return buffer_pool_.get();
+    }
+
 private:
     struct KeyEntry
     {
@@ -113,6 +128,10 @@ private:
     bool load();
 
     [[nodiscard]] std::string read_value(const KeyEntry& entry) const;
+
+    // buffer pool implementation
+    static std::unique_ptr<BufferPool> buffer_pool_;
+    std::string read_value_with_buffer_pool(const KeyEntry& entry) const;
 };
 
 #endif //KVDB_SSTABLEREADER_H

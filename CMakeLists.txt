@@ -32,4 +32,6 @@ add_executable(KVDB main.cpp
         Page.h
         DirectIO.cpp
         DirectIO.h
+        BufferPool.cpp
+        BufferPool.h
 )
