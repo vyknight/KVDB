@@ -8,6 +8,8 @@
 #include "test_sstable_reader.h"
 #include "test_wal.h"
 #include "test_kvstore.h"
+#include "test_page.h"
+#include "test_buffer_pool.h"
 
 void run_tests()
 {
@@ -16,4 +18,6 @@ void run_tests()
     sstable_reader_tests_main();
     wal_tests_main();
     kvstore_tests_main();
+    page_tests_main();
+    bufferpool_tests_main();
 }

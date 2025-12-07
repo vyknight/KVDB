@@ -26,4 +26,14 @@ add_executable(KVDB main.cpp
         KVStore.h
         Tests/test_kvstore.cpp
         Tests/test_kvstore.h
+        PageId.cpp
+        PageId.h
+        Page.cpp
+        Page.h
+        BufferPool.cpp
+        BufferPool.h
+        Tests/test_page.cpp
+        Tests/test_page.h
+        Tests/test_buffer_pool.cpp
+        Tests/test_buffer_pool.h
 )

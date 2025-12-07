@@ -407,3 +407,65 @@ std::string SSTableReader::read_value(const KeyEntry& entry) const
     // Extract value from buffer
     return std::string(value_data_.get() + buffer_offset, entry.value_length);
 }
+
+// std::shared_ptr<BufferPool> SSTableReader::global_buffer_pool_ = nullptr;
+
+// std::optional<std::string> SSTableReader::get_with_buffer_pool(const std::string& key) {
+//     // First, find which page contains the key using your existing index
+//     // This is a simplified example
+//
+//     // For now, let's assume we know the page offset
+//     // In reality, you'd need a page index or B-tree structure
+//
+//     uint64_t page_offset = 0;  // Simplified
+//
+//     if (!global_buffer_pool_) {
+//         // No buffer pool, read directly
+//         return read_page_from_file(page_offset);
+//     }
+//
+//     PageId page_id(filename_, page_offset);
+//
+//     // Check buffer pool first
+//     Page* page = global_buffer_pool_->get_page(page_id);
+//     if (page) {
+//         // Found in buffer pool
+//         // Extract the value from the page
+//         std::string page_data(page->get_data(), Page::PAGE_SIZE);
+//         global_buffer_pool_->unpin_page(page_id);
+//
+//         // Parse the page to find the key (simplified)
+//         return extract_value_from_page(page_data, key);
+//     }
+//
+//     // Not in buffer pool, read from file
+//     auto page_data = read_page_from_file(page_offset);
+//     if (!page_data) {
+//         return std::nullopt;
+//     }
+//
+//     // Add to buffer pool
+//     Page new_page;
+//     new_page.set_id(page_id);
+//     new_page.copy_from(page_data->data(), page_data->size());
+//
+//     if (global_buffer_pool_->add_page(page_id, std::move(new_page))) {
+//         global_buffer_pool_->unpin_page(page_id);
+//     }
+//
+//     return extract_value_from_page(*page_data, key);
+// }
+//
+// std::optional<std::string> SSTableReader::read_page_from_file(uint64_t page_offset) const {
+//     // Implementation depends on your file reading logic
+//     // This would read 4KB from the file at the given offset
+//     // For now, return a dummy page
+//     return std::string(Page::PAGE_SIZE, 'X');
+// }
+//
+// std::optional<std::string> SSTableReader::extract_value_from_page(
+//     const std::string& page_data, const std::string& key) {
+//     // Simplified: just return the first part of the page
+//     // In reality, you'd parse the page structure
+//     return page_data.substr(0, 100);
+// }

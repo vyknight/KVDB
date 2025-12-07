@@ -4,7 +4,6 @@
 
 #include "Memtable.h"
 #include <iostream>
-#include <bits/locale_facets_nonio.h>
 
 // Constructor
 Memtable::Memtable(const size_t memtable_size)
