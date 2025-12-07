@@ -84,18 +84,18 @@ public:
      */
     [[nodiscard]] std::vector<std::pair<std::string, std::string>> scan_range(const std::string& start_key, const std::string& end_key) const;
 
-    // /**
-    //  * Set a shared buffer pool
-    //  */
-    // static void set_global_buffer_pool(std::shared_ptr<BufferPool> pool) {
-    //     global_buffer_pool_ = std::move(pool);
-    // }
-    //
-    // /**
-    //  * Get a page from the SSTable using buffer pool
-    //  * For demonstration - assumes your SSTable is page-structured
-    //  */
-    // std::optional<std::string> get_with_buffer_pool(const std::string& key);
+    /**
+     * Set a shared buffer pool
+     */
+    static void set_global_buffer_pool(std::shared_ptr<BufferPool> pool) {
+        global_buffer_pool_ = std::move(pool);
+    }
+
+    /**
+     * Get a page from the SSTable using buffer pool
+     * For demonstration - assumes your SSTable is page-structured
+     */
+    std::optional<std::string> get_with_buffer_pool(const std::string& key);
 
 private:
     struct KeyEntry
@@ -131,6 +131,8 @@ private:
     static std::shared_ptr<BufferPool> global_buffer_pool_;
 
     std::optional<std::string> read_page_from_file(uint64_t page_offset) const;
+
+    std::optional<std::string> extract_value_from_page(const std::string &page_data, const std::string &key);
 };
 
 #endif //KVDB_SSTABLEREADER_H
