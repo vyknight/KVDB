@@ -62,8 +62,10 @@ bool LSMTree::wal_file_exists() const {
 }
 
 void LSMTree::recover_from_wal() {
-    // Check if WAL file exists
-    if (!wal_file_exists()) {
+    // First check if WAL file exists before trying to open it
+    std::string wal_path = data_directory_ + "/wal.log";
+
+    if (!fs::exists(wal_path)) {
         std::cout << "No WAL file found, starting fresh." << std::endl;
         return;
     }
@@ -71,11 +73,29 @@ void LSMTree::recover_from_wal() {
     std::cout << "Recovering from WAL..." << std::endl;
 
     try {
+        // Check if WAL file is empty or too small
+        uintmax_t file_size = fs::file_size(wal_path);
+        if (file_size < 16) { // Less than header size
+            std::cout << "WAL file too small or empty, skipping recovery." << std::endl;
+            fs::remove(wal_path);
+            return;
+        }
+
         // Use the recover method from WriteAheadLog
         std::vector<WriteAheadLog::LogEntry> entries;
+
+        // Note: wal_ is already constructed in the LSMTree constructor
+        // We need to use the existing wal_ object
         if (!wal_->recover(entries)) {
             std::cerr << "Failed to recover from WAL. Starting fresh." << std::endl;
             wal_->clear();
+            return;
+        }
+
+        std::cout << "Recovered " << entries.size() << " entries from WAL." << std::endl;
+
+        if (entries.empty()) {
+            std::cout << "WAL is empty, nothing to recover." << std::endl;
             return;
         }
 
@@ -88,16 +108,11 @@ void LSMTree::recover_from_wal() {
             }
         }
 
-        std::cout << "Recovered " << entries.size() << " entries from WAL." << std::endl;
+        std::cout << "Applied " << entries.size() << " entries to memtable." << std::endl;
 
-        // Clear WAL after successful recovery
-        wal_->clear();
-
-        // If memtable is too big after recovery, flush it
-        if (should_flush_memtable()) {
-            std::cout << "Memtable is full after recovery, flushing..." << std::endl;
-            flush_memtable();
-        }
+        // IMPORTANT: Don't clear the WAL here!
+        // We only clear it after successfully flushing the memtable to SSTable
+        // The WAL should persist until we successfully write to disk
 
     } catch (const std::exception& e) {
         std::cerr << "Error during WAL recovery: " << e.what() << std::endl;
@@ -112,7 +127,7 @@ std::string LSMTree::generate_sstable_filename(int level, uint64_t id) {
 }
 
 bool LSMTree::put(const std::string& key, const std::string& value) {
-    std::lock_guard<std::mutex> lock(memtable_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(memtable_mutex_);
 
     // 1. Write to Write-Ahead Log for durability
     if (!wal_->log_put(key, value)) {
@@ -121,7 +136,7 @@ bool LSMTree::put(const std::string& key, const std::string& value) {
     }
 
     // 2. Add to memtable
-    bool should_flush = memtable_.put(key, value);
+    bool should_flush = !memtable_.put(key, value);
 
     // 3. Update statistics
     stats_.total_puts++;
@@ -140,7 +155,7 @@ std::optional<std::string> LSMTree::get(const std::string& key) {
 
     // 1. First check memtable (most recent data)
     {
-        std::lock_guard<std::mutex> lock(memtable_mutex_);
+        std::lock_guard<std::recursive_mutex> lock(memtable_mutex_);
         auto memtable_value = memtable_.get(key);
         if (memtable_value) {
             // Check if it's a tombstone
@@ -157,12 +172,12 @@ std::optional<std::string> LSMTree::get(const std::string& key) {
     }
 
     // 2. If not found in memtable, search SSTables
-    std::lock_guard<std::mutex> lock(level_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(level_mutex_);
     return search_sstables(key);
 }
 
 bool LSMTree::remove(const std::string& key) {
-    std::lock_guard<std::mutex> lock(memtable_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(memtable_mutex_);
 
     // 1. Write delete to WAL
     if (!wal_->log_delete(key)) {
@@ -171,7 +186,7 @@ bool LSMTree::remove(const std::string& key) {
     }
 
     // 2. Add tombstone to memtable (using remove method which adds tombstone)
-    bool should_flush = memtable_.remove(key);
+    bool should_flush = !memtable_.remove(key);
 
     // 3. Update statistics
     stats_.total_deletes++;
@@ -190,7 +205,7 @@ LSMTree::scan(const std::string& start_key, const std::string& end_key) {
 
     // 1. Get from memtable first (most recent)
     {
-        std::lock_guard<std::mutex> lock(memtable_mutex_);
+        std::lock_guard<std::recursive_mutex> lock(memtable_mutex_);
         // We need to get all entries and filter by range
         auto entries = memtable_.get_all_entries();
         for (const auto& [key, entry] : entries) {
@@ -238,8 +253,8 @@ bool LSMTree::flush_memtable() {
     }
 
     try {
-        std::lock_guard<std::mutex> mem_lock(memtable_mutex_);
-        std::lock_guard<std::mutex> level_lock(level_mutex_);
+        std::lock_guard<std::recursive_mutex> mem_lock(memtable_mutex_);
+        std::lock_guard<std::recursive_mutex> level_lock(level_mutex_);
 
         // 1. Get all entries from memtable
         auto entries = memtable_.get_all_entries();
@@ -269,9 +284,9 @@ bool LSMTree::flush_memtable() {
 
         levels_[0].sstables.push_back(std::move(sstable));
 
-        // 5. Clear memtable and WAL
+        // 5. Clear memtable AND WAL (only after successful SSTable write!)
         memtable_.clear();
-        wal_->clear();
+        wal_->clear();  // Clear WAL here, after data is safely on disk
 
         // 6. Update statistics
         stats_.memtable_flushes++;
@@ -386,8 +401,8 @@ std::string LSMTree::create_tombstone() const {
 }
 
 LSMTree::Stats LSMTree::get_stats() const {
-    std::lock_guard<std::mutex> mem_lock(memtable_mutex_);
-    std::lock_guard<std::mutex> level_lock(level_mutex_);
+    std::lock_guard<std::recursive_mutex> mem_lock(memtable_mutex_);
+    std::lock_guard<std::recursive_mutex> level_lock(level_mutex_);
 
     Stats result = stats_;
 
@@ -405,12 +420,12 @@ LSMTree::Stats LSMTree::get_stats() const {
 }
 
 size_t LSMTree::get_memtable_size() const {
-    std::lock_guard<std::mutex> lock(memtable_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(memtable_mutex_);
     return memtable_.size();
 }
 
 size_t LSMTree::get_sstable_count() const {
-    std::lock_guard<std::mutex> lock(level_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(level_mutex_);
     size_t total = 0;
     for (const auto& level : levels_) {
         total += level.sstables.size();
@@ -419,7 +434,7 @@ size_t LSMTree::get_sstable_count() const {
 }
 
 std::vector<int> LSMTree::get_level_sizes() const {
-    std::lock_guard<std::mutex> lock(level_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(level_mutex_);
     std::vector<int> sizes;
     for (const auto& level : levels_) {
         sizes.push_back(static_cast<int>(level.sstables.size()));
@@ -448,14 +463,14 @@ std::vector<SSTableReader> LSMTree::merge_sstables(
 }
 
 void LSMTree::add_sstable_to_level(int level, SSTableReader&& sstable) {
-    std::lock_guard<std::mutex> lock(level_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(level_mutex_);
     if (level >= 0 && level < static_cast<int>(levels_.size())) {
         levels_[level].sstables.push_back(std::move(sstable));
     }
 }
 
 void LSMTree::remove_sstable_from_level(int level, const std::string& filename) {
-    std::lock_guard<std::mutex> lock(level_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(level_mutex_);
     if (level >= 0 && level < static_cast<int>(levels_.size())) {
         auto& sstables = levels_[level].sstables;
         sstables.erase(

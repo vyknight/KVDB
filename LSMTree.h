@@ -80,8 +80,8 @@ private:
     std::atomic<bool> is_compacting_{false};
 
     // Mutexes for thread safety
-    mutable std::mutex memtable_mutex_;
-    mutable std::mutex level_mutex_;
+    mutable std::recursive_mutex memtable_mutex_;
+    mutable std::recursive_mutex level_mutex_;
 
     // Statistics
     Stats stats_;
@@ -121,6 +121,7 @@ private:
     // Disallow copying
     LSMTree(const LSMTree&) = delete;
     LSMTree& operator=(const LSMTree&) = delete;
+
 };
 
 #endif // LSM_TREE_H
