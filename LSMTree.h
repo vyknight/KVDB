@@ -5,6 +5,7 @@
 #include "SSTableReader.h"
 #include "WriteAheadLog.h"
 #include "BufferPool.h"
+#include "LevelManager.h"  // Add this line
 #include <vector>
 #include <map>
 #include <memory>
@@ -54,19 +55,15 @@ public:
     size_t get_sstable_count() const;
     std::vector<int> get_level_sizes() const;
 
+    // New: Get LevelManager for debugging
+    void print_levels() const;
+
 private:
     // Core components
     Memtable memtable_;
     std::unique_ptr<WriteAheadLog> wal_;
-    std::unique_ptr<BufferPool> buffer_pool_;
-
-    // LSM tree levels: level 0 (immutable memtables) and other levels
-    struct LevelInfo {
-        std::vector<SSTableReader> sstables;
-        uint64_t next_sstable_id = 0;
-    };
-
-    std::vector<LevelInfo> levels_;
+    std::shared_ptr<BufferPool> buffer_pool_;
+    std::unique_ptr<LevelManager> level_manager_;  // Replace old levels_ with LevelManager
 
     // Configuration
     std::string data_directory_;
@@ -80,8 +77,8 @@ private:
     std::atomic<bool> is_compacting_{false};
 
     // Mutexes for thread safety
-    mutable std::recursive_mutex memtable_mutex_;
-    mutable std::recursive_mutex level_mutex_;
+    mutable std::recursive_mutex memtable_mutex_;  // Changed to recursive_mutex
+    mutable std::recursive_mutex level_mutex_;     // Changed to recursive_mutex
 
     // Statistics
     Stats stats_;
@@ -96,15 +93,9 @@ private:
 
     // Compaction operations
     void trigger_compaction();
-    void compact_level(int level);
-    std::vector<SSTableReader> merge_sstables(
-        const std::vector<SSTableReader>& sstables,
-        int target_level);
 
     // Helper methods
     std::string generate_sstable_filename(int level, uint64_t id);
-    void add_sstable_to_level(int level, SSTableReader&& sstable);
-    void remove_sstable_from_level(int level, const std::string& filename);
 
     // Search methods
     std::optional<std::string> search_sstables(const std::string& key) const;
@@ -121,7 +112,6 @@ private:
     // Disallow copying
     LSMTree(const LSMTree&) = delete;
     LSMTree& operator=(const LSMTree&) = delete;
-
 };
 
 #endif // LSM_TREE_H

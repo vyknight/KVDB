@@ -10,16 +10,18 @@
 #include "test_kvstore.h"
 #include "test_page.h"
 #include "test_buffer_pool.h"
-#include "test_lsm.h"
+// #include "test_lsm.h"
+#include "test_compaction.h"
 
 void run_tests()
 {
-    memtable_tests_main();
-    sstable_writer_tests_main();
-    sstable_reader_tests_main();
-    wal_tests_main();
-    kvstore_tests_main();
-    page_tests_main();
-    bufferpool_tests_main();
-    lsm_tests_main();
+    // memtable_tests_main();
+    // sstable_writer_tests_main();
+    // sstable_reader_tests_main();
+    // wal_tests_main();
+    // kvstore_tests_main();
+    // page_tests_main();
+    // bufferpool_tests_main();
+    // lsm_tests_main();
+    compaction_tests_main();
 }

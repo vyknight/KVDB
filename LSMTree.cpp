@@ -18,8 +18,8 @@ LSMTree::LSMTree(const std::string& data_dir,
       bits_per_entry_(bits_per_entry),
       memtable_(memtable_size) {
 
-    // Initialize directories
-    initialize_directories();
+    // Create main directory
+    fs::create_directories(data_directory_);
 
     // Initialize buffer pool
     buffer_pool_ = std::make_unique<BufferPool>(buffer_pool_size);
@@ -28,14 +28,16 @@ LSMTree::LSMTree(const std::string& data_dir,
     std::string wal_path = data_directory_ + "/wal.log";
     wal_ = std::make_unique<WriteAheadLog>(wal_path);
 
-    // Initialize levels (we'll start with 5 levels)
-    levels_.resize(5);
+    // Initialize LevelManager
+    LevelManager::Config lm_config;
+    lm_config.level0_max_sstables = 2;  // Compact when 2 SSTables in level 0
+    lm_config.size_ratio = 2;           // Size ratio between levels
+    lm_config.max_levels = 7;           // Levels 0-6
+
+    level_manager_ = std::make_unique<LevelManager>(data_directory_, buffer_pool_, lm_config);
 
     // Recover from WAL if it exists
     recover_from_wal();
-
-    // Load existing SSTables from disk (to be implemented later)
-    // load_existing_sstables();
 }
 
 LSMTree::~LSMTree() {
@@ -45,27 +47,14 @@ LSMTree::~LSMTree() {
     }
 }
 
-void LSMTree::initialize_directories() {
-    // Create main data directory
-    fs::create_directories(data_directory_);
-
-    // Create level directories
-    for (int i = 0; i < 5; i++) {
-        std::string level_dir = data_directory_ + "/level_" + std::to_string(i);
-        fs::create_directories(level_dir);
-    }
-}
-
 bool LSMTree::wal_file_exists() const {
     std::string wal_path = data_directory_ + "/wal.log";
     return fs::exists(wal_path);
 }
 
 void LSMTree::recover_from_wal() {
-    // First check if WAL file exists before trying to open it
-    std::string wal_path = data_directory_ + "/wal.log";
-
-    if (!fs::exists(wal_path)) {
+    // Check if WAL file exists
+    if (!wal_file_exists()) {
         std::cout << "No WAL file found, starting fresh." << std::endl;
         return;
     }
@@ -73,19 +62,8 @@ void LSMTree::recover_from_wal() {
     std::cout << "Recovering from WAL..." << std::endl;
 
     try {
-        // Check if WAL file is empty or too small
-        uintmax_t file_size = fs::file_size(wal_path);
-        if (file_size < 16) { // Less than header size
-            std::cout << "WAL file too small or empty, skipping recovery." << std::endl;
-            fs::remove(wal_path);
-            return;
-        }
-
         // Use the recover method from WriteAheadLog
         std::vector<WriteAheadLog::LogEntry> entries;
-
-        // Note: wal_ is already constructed in the LSMTree constructor
-        // We need to use the existing wal_ object
         if (!wal_->recover(entries)) {
             std::cerr << "Failed to recover from WAL. Starting fresh." << std::endl;
             wal_->clear();
@@ -110,9 +88,11 @@ void LSMTree::recover_from_wal() {
 
         std::cout << "Applied " << entries.size() << " entries to memtable." << std::endl;
 
-        // IMPORTANT: Don't clear the WAL here!
-        // We only clear it after successfully flushing the memtable to SSTable
-        // The WAL should persist until we successfully write to disk
+        // If memtable is too big after recovery, flush it
+        if (should_flush_memtable()) {
+            std::cout << "Memtable is full after recovery, flushing..." << std::endl;
+            flush_memtable();
+        }
 
     } catch (const std::exception& e) {
         std::cerr << "Error during WAL recovery: " << e.what() << std::endl;
@@ -171,8 +151,7 @@ std::optional<std::string> LSMTree::get(const std::string& key) {
         }
     }
 
-    // 2. If not found in memtable, search SSTables
-    std::lock_guard<std::recursive_mutex> lock(level_mutex_);
+    // 2. If not found in memtable, search SSTables using LevelManager
     return search_sstables(key);
 }
 
@@ -254,7 +233,6 @@ bool LSMTree::flush_memtable() {
 
     try {
         std::lock_guard<std::recursive_mutex> mem_lock(memtable_mutex_);
-        std::lock_guard<std::recursive_mutex> level_lock(level_mutex_);
 
         // 1. Get all entries from memtable
         auto entries = memtable_.get_all_entries();
@@ -263,44 +241,53 @@ bool LSMTree::flush_memtable() {
             return true;
         }
 
-        // 2. Generate SSTable filename
-        uint64_t sstable_id = levels_[0].next_sstable_id++;
-        std::string filename = generate_sstable_filename(0, sstable_id);
+        std::cout << "[DEBUG] Flushing memtable with " << entries.size() << " entries" << std::endl;
+
+        // 2. Generate temporary SSTable filename
+        uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        std::string temp_filename = data_directory_ + "/temp_" + std::to_string(timestamp) + ".sst";
 
         // 3. Write to SSTable
-        if (!SSTableWriter::write(filename, entries)) {
-            std::cerr << "Failed to write SSTable: " << filename << std::endl;
+        if (!SSTableWriter::write(temp_filename, entries)) {
+            std::cerr << "Failed to write SSTable: " << temp_filename << std::endl;
             is_flushing_ = false;
             return false;
         }
 
-        // 4. Create SSTableReader and add to level 0
-        SSTableReader sstable(filename);
-        if (!sstable.is_valid()) {
-            std::cerr << "Failed to load SSTable: " << filename << std::endl;
+        // 4. Create SSTableReader as shared_ptr
+        auto sstable = std::make_shared<SSTableReader>(temp_filename);
+        if (!sstable->is_valid()) {
+            std::cerr << "Failed to load SSTable: " << temp_filename << std::endl;
+            fs::remove(temp_filename);
             is_flushing_ = false;
             return false;
         }
 
-        levels_[0].sstables.push_back(std::move(sstable));
+        std::cout << "[DEBUG] Created SSTable with " << sstable->size() << " entries" << std::endl;
 
-        // 5. Clear memtable AND WAL (only after successful SSTable write!)
+        // 5. Add to LevelManager
+        if (!level_manager_->add_sstable_level0(sstable)) {
+            std::cerr << "Failed to add SSTable to LevelManager" << std::endl;
+            fs::remove(temp_filename);
+            is_flushing_ = false;
+            return false;
+        }
+
+        std::cout << "[DEBUG] Added SSTable to LevelManager" << std::endl;
+
+        // 6. Clear memtable and WAL
         memtable_.clear();
-        wal_->clear();  // Clear WAL here, after data is safely on disk
+        wal_->clear();
 
-        // 6. Update statistics
+        // 7. Update statistics
         stats_.memtable_flushes++;
-        stats_.sstables_created++;
+        stats_.sstables_created = level_manager_->get_total_sstable_count();
 
-        // 7. Check if we need to trigger compaction
-        // For now, compact when we have 2 SSTables at level 0
-        if (levels_[0].sstables.size() >= 2) {
-            // trigger_compaction(); // We'll implement this later
-            std::cout << "Compaction triggered (not yet implemented)" << std::endl;
-        }
+        // 8. Check for compaction
+        trigger_compaction();
 
-        std::cout << "Memtable flushed to " << filename
-                  << " with " << entries.size() << " entries" << std::endl;
+        std::cout << "Memtable flushed with " << entries.size() << " entries" << std::endl;
 
         is_flushing_ = false;
         return true;
@@ -313,43 +300,21 @@ bool LSMTree::flush_memtable() {
 }
 
 std::optional<std::string> LSMTree::search_sstables(const std::string& key) const {
-    // Search from newest to oldest (level 0 to highest)
-    // Within each level, search from newest to oldest SSTable
+    // Use LevelManager to find candidate SSTables
+    auto candidates = level_manager_->find_candidate_sstables(key);
 
-    for (int level = 0; level < static_cast<int>(levels_.size()); level++) {
-        const auto& sstables = levels_[level].sstables;
-
-        if (level == 0) {
-            // Level 0: Search all SSTables (most recent first)
-            for (auto it = sstables.rbegin(); it != sstables.rend(); ++it) {
-                if (auto value = it->get(key)) {
-                    if (is_tombstone(*value)) {
-                        return std::nullopt;  // Tombstone found
-                    }
-                    return value;
-                }
-
-                // Also check if key is deleted
-                if (it->is_deleted(key)) {
-                    return std::nullopt;
-                }
+    // Search from newest to oldest (candidates are already sorted by LevelManager)
+    for (const auto& sstable : candidates) {
+        if (auto value = sstable->get(key)) {
+            if (is_tombstone(*value)) {
+                return std::nullopt;  // Tombstone found
             }
-        } else {
-            // Higher levels: Search SSTables
-            for (auto it = sstables.rbegin(); it != sstables.rend(); ++it) {
-                // For now, search all SSTables in higher levels
-                // Later we can implement key-range optimization
-                if (auto value = it->get(key)) {
-                    if (is_tombstone(*value)) {
-                        return std::nullopt;
-                    }
-                    return value;
-                }
+            return value;
+        }
 
-                if (it->is_deleted(key)) {
-                    return std::nullopt;
-                }
-            }
+        // Also check if key is deleted
+        if (sstable->is_deleted(key)) {
+            return std::nullopt;
         }
     }
 
@@ -359,24 +324,23 @@ std::optional<std::string> LSMTree::search_sstables(const std::string& key) cons
 std::vector<std::pair<std::string, std::string>>
 LSMTree::scan_sstables(const std::string& start_key, const std::string& end_key) const {
     std::vector<std::pair<std::string, std::string>> results;
-    std::map<std::string, std::string> merged_results;  // To handle duplicates
+    std::map<std::string, std::string> merged_results;
 
-    // For each level, from newest to oldest
-    for (int level = 0; level < static_cast<int>(levels_.size()); level++) {
-        const auto& sstables = levels_[level].sstables;
+    // Get all SSTables that might contain keys in the range using LevelManager
+    auto candidates = level_manager_->find_sstables_for_range(start_key, end_key);
 
-        // For each SSTable in this level, from newest to oldest
-        for (auto it = sstables.rbegin(); it != sstables.rend(); ++it) {
-            auto sstable_results = it->scan_range(start_key, end_key);
+    // Search each SSTable (newest first)
+    for (auto it = candidates.rbegin(); it != candidates.rend(); ++it) {
+        const auto& sstable = *it;
+        auto sstable_results = sstable->scan_range(start_key, end_key);
 
-            // Merge with existing results (newer SSTables override older ones)
-            for (const auto& [key, value] : sstable_results) {
-                if (!is_tombstone(value)) {
-                    merged_results[key] = value;
-                } else {
-                    // Remove if tombstone
-                    merged_results.erase(key);
-                }
+        // Merge results (newer SSTables override older ones)
+        for (const auto& [key, value] : sstable_results) {
+            if (!is_tombstone(value)) {
+                merged_results[key] = value;
+            } else {
+                // Remove if tombstone
+                merged_results.erase(key);
             }
         }
     }
@@ -389,9 +353,37 @@ LSMTree::scan_sstables(const std::string& start_key, const std::string& end_key)
     return results;
 }
 
+void LSMTree::trigger_compaction() {
+    if (is_compacting_.exchange(true)) {
+        return;
+    }
+
+    try {
+        // Check for compaction tasks and process them
+        while (auto task = level_manager_->get_compaction_task()) {
+            std::cout << "Compacting level " << task->source_level
+                      << " -> level " << task->target_level
+                      << " (" << task->input_sstables.size() << " SSTables)" << std::endl;
+
+            // Perform compaction using LevelManager's compactor
+            level_manager_->perform_compaction(*task);
+
+            stats_.compactions++;
+
+            // Print level status after compaction
+            level_manager_->print_levels();
+        }
+
+    } catch (const std::exception& e) {
+        std::cerr << "Error during compaction: " << e.what() << std::endl;
+    }
+
+    is_compacting_ = false;
+}
+
 bool LSMTree::is_tombstone(const std::string& value) const {
-    // For now, we'll check if the value is empty
-    // In your Memtable::Entry, remove() sets value to ""
+    // In your Memtable implementation, remove() sets value to empty string
+    // So empty string is a tombstone
     return value.empty();
 }
 
@@ -402,7 +394,6 @@ std::string LSMTree::create_tombstone() const {
 
 LSMTree::Stats LSMTree::get_stats() const {
     std::lock_guard<std::recursive_mutex> mem_lock(memtable_mutex_);
-    std::lock_guard<std::recursive_mutex> level_lock(level_mutex_);
 
     Stats result = stats_;
 
@@ -410,10 +401,12 @@ LSMTree::Stats LSMTree::get_stats() const {
     result.memtable_size = memtable_.size();
     result.memtable_entry_count = memtable_.entry_count();
 
-    // Count SSTables per level
-    result.sstable_counts.clear();
-    for (size_t i = 0; i < levels_.size(); i++) {
-        result.sstable_counts.push_back(levels_[i].sstables.size());
+    // Get LevelManager stats
+    if (level_manager_) {
+        auto lm_stats = level_manager_->get_stats();
+        result.sstable_counts = lm_stats.sstables_per_level;
+        result.sstables_created = lm_stats.total_sstables;
+        result.sstables_deleted = lm_stats.sstables_deleted;
     }
 
     return result;
@@ -425,60 +418,22 @@ size_t LSMTree::get_memtable_size() const {
 }
 
 size_t LSMTree::get_sstable_count() const {
-    std::lock_guard<std::recursive_mutex> lock(level_mutex_);
-    size_t total = 0;
-    for (const auto& level : levels_) {
-        total += level.sstables.size();
-    }
-    return total;
+    if (!level_manager_) return 0;
+    return level_manager_->get_total_sstable_count();
 }
 
 std::vector<int> LSMTree::get_level_sizes() const {
-    std::lock_guard<std::recursive_mutex> lock(level_mutex_);
+    if (!level_manager_) return {};
+
     std::vector<int> sizes;
-    for (const auto& level : levels_) {
-        sizes.push_back(static_cast<int>(level.sstables.size()));
+    for (int i = 0; i < level_manager_->get_level_count(); i++) {
+        sizes.push_back(static_cast<int>(level_manager_->get_sstable_count(i)));
     }
     return sizes;
 }
 
-// Placeholder compaction methods (to be implemented)
-void LSMTree::trigger_compaction() {
-    // TODO: Implement compaction logic
-    std::cout << "Compaction triggered (not yet implemented)" << std::endl;
-}
-
-void LSMTree::compact_level(int level) {
-    // TODO: Implement level compaction
-    std::cout << "Compacting level " << level << " (not yet implemented)" << std::endl;
-}
-
-std::vector<SSTableReader> LSMTree::merge_sstables(
-    const std::vector<SSTableReader>& sstables,
-    int target_level) {
-    // TODO: Implement SSTable merging
-    std::cout << "Merging " << sstables.size() << " SSTables to level "
-              << target_level << " (not yet implemented)" << std::endl;
-    return {};
-}
-
-void LSMTree::add_sstable_to_level(int level, SSTableReader&& sstable) {
-    std::lock_guard<std::recursive_mutex> lock(level_mutex_);
-    if (level >= 0 && level < static_cast<int>(levels_.size())) {
-        levels_[level].sstables.push_back(std::move(sstable));
-    }
-}
-
-void LSMTree::remove_sstable_from_level(int level, const std::string& filename) {
-    std::lock_guard<std::recursive_mutex> lock(level_mutex_);
-    if (level >= 0 && level < static_cast<int>(levels_.size())) {
-        auto& sstables = levels_[level].sstables;
-        sstables.erase(
-            std::remove_if(sstables.begin(), sstables.end(),
-                [&filename](const SSTableReader& sst) {
-                    return sst.get_filename() == filename;
-                }),
-            sstables.end()
-        );
+void LSMTree::print_levels() const {
+    if (level_manager_) {
+        level_manager_->print_levels();
     }
 }

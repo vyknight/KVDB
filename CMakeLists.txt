@@ -45,4 +45,6 @@ add_executable(KVDB main.cpp
         Tests/test_lsm.cpp
         Tests/test_lsm.h
         Tests/test_helper.h
+        Tests/test_compaction.cpp
+        Tests/test_compaction.h
 )
