@@ -379,11 +379,6 @@ SSTableReader::scan_range(const std::string& start_key, const std::string& end_k
 
 std::string SSTableReader::read_value(const KeyEntry& entry) const
 {
-    if (buffer_pool_)
-    {
-        return read_value_with_buffer_pool(entry);
-    }
-
     if (!value_data_ || key_entries_.empty()) {
         throw std::runtime_error("SSTable data not properly loaded");
     }
@@ -411,36 +406,4 @@ std::string SSTableReader::read_value(const KeyEntry& entry) const
 
     // Extract value from buffer
     return std::string(value_data_.get() + buffer_offset, entry.value_length);
-}
-
-// Buffer Pool Implementation
-
-std::unique_ptr<BufferPool> SSTableReader::buffer_pool_ = nullptr;
-
-std::string SSTableReader::read_value_with_buffer_pool(const KeyEntry& entry) const
-{
-    if (!buffer_pool_)
-    {
-        // use non buffered reads
-        return read_value(entry);
-    }
-
-    // calculate the page that would contain this value
-    uint64_t page_offset = (entry.value_offset / Page::PAGE_SIZE) * Page::PAGE_SIZE;
-    uint64_t offset_in_page = entry.value_offset - page_offset;
-
-    // Get page from buffer pool
-    Page* page = buffer_pool_->get_page(filename_, page_offset);
-    if (!page) {
-        throw std::runtime_error("Failed to get page from buffer pool");
-    }
-
-    // Extract value from page
-    std::string value(entry.value_length, '\0');
-    page->copy_to(&value[0], entry.value_length, offset_in_page);
-
-    // Release page (decrement pin count)
-    buffer_pool_->release_page(page);
-
-    return value;
 }
