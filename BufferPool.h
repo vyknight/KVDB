@@ -1,165 +1,187 @@
-//
-// Created by K on 2025-12-06.
-//
-
 #ifndef KVDB_BUFFERPOOL_H
 #define KVDB_BUFFERPOOL_H
 
 #include "Page.h"
-#include "PageId.h"
-#include "DirectIO.h"
-#include <vector>
-#include <list>
 #include <unordered_map>
+#include <list>
+#include <vector>
 #include <memory>
 #include <mutex>
-#include <shared_mutex>
+#include <optional>
+#include <string>
 #include <functional>
 
-class BufferPool
-{
+// Forward declaration
+class DirectIO;
+
+class BufferPool {
 public:
-    struct Config
-    {
-        size_t max_pages;
-        size_t initial_global_depth;
-        size_t max_global_depth;
-        size_t bucket_capacity;
-        bool use_direct_io;
-        bool debug_logging;
+    /**
+     * Constructor for BufferPool
+     * @param max_pages Maximum number of pages in buffer pool
+     * @param use_lru If true, use LRU eviction; if false, use Clock eviction
+     */
+    explicit BufferPool(size_t max_pages = 1024, bool use_lru = true);
 
-        Config(size_t mp=100, size_t igd=2, size_t mgd=10, size_t bc=4, bool dio=true, bool dl=false) :
-            max_pages(mp),
-            initial_global_depth(igd),
-            max_global_depth(mgd),
-            bucket_capacity(bc),
-            use_direct_io(dio),
-            debug_logging(dl)
-        {}
-    };
-
-    explicit BufferPool(const Config& config = Config());
     ~BufferPool();
 
-    // no copy
+    // No copy
     BufferPool(const BufferPool&) = delete;
     BufferPool& operator=(const BufferPool&) = delete;
 
-    // Core ops
-    Page* get_page(const std::string& filename, uint64_t offset);
-    Page* get_page(const PageId& page_id);
+    // Move enabled
+    BufferPool(BufferPool&& other) noexcept;
+    BufferPool& operator=(BufferPool&& other) noexcept;
 
-    void release_page(Page* page);
-    void mark_dirty(Page* page);
-    void flush_page(Page* page);
+    /**
+     * Get a page from buffer pool or load from disk
+     * @param page_id The page identifier
+     * @param file DirectIO file handle for reading if needed
+     * @param read_only Whether to mark page as read-only
+     * @return Pointer to page if successful, nullptr otherwise
+     */
+    Page* get_page(const PageId& page_id, DirectIO* file = nullptr, bool read_only = false);
 
-    // pool management
-    void flush_all();
-    void clear();
-    void resize(size_t new_max_pages);
+    /**
+     * Mark a page as unpinned (decrease pin count)
+     * @param page_id The page identifier
+     */
+    void unpin_page(const PageId& page_id);
 
-    // stats
-    struct BufferPoolStats
-    {
-        size_t total_pages = 0;
-        size_t used_pages = 0;
+    /**
+     * Mark a page as dirty (modified)
+     * @param page_id The page identifier
+     */
+    void mark_dirty(const PageId& page_id);
+
+    /**
+     * Write a specific page back to disk
+     * @param page_id The page identifier
+     * @param file DirectIO file handle
+     * @return true if successful, false otherwise
+     */
+    bool flush_page(const PageId& page_id, DirectIO* file);
+
+    /**
+     * Remove a page from buffer pool
+     * @param page_id The page identifier
+     * @return true if page was removed, false if not found or pinned
+     */
+    bool evict_page(const PageId& page_id);
+
+    /**
+     * Get buffer pool statistics
+     */
+    struct Stats {
         size_t hits = 0;
         size_t misses = 0;
         size_t evictions = 0;
-        size_t disk_reads = 0;
-        size_t disk_writes = 0;
-        size_t directory_size = 0;
-        size_t total_buckets = 0;
-        size_t splits = 0;
-        size_t merges = 0;
+        size_t current_size = 0;
+        size_t max_size = 0;
+        size_t dirty_pages = 0;
+        size_t pinned_pages = 0;
     };
 
-    BufferPoolStats get_stats() const;
-    void reset_stats();
+    Stats get_stats() const;
 
-    // debug
-    void print_directory() const;
-    void print_bucket_details() const;
+    /**
+     * Clear all statistics
+     */
+    void clear_stats();
+
+    /**
+     * Resize the buffer pool
+     * @param new_max_pages New maximum size
+     */
+    void resize(size_t new_max_pages);
+
+    /**
+     * Clear the entire buffer pool (flush dirty pages first)
+     * @param file DirectIO file handle for writing dirty pages
+     * @return Number of pages flushed
+     */
+    size_t clear(DirectIO* file = nullptr);
+
+    /**
+     * Check if a page is in buffer pool
+     * @param page_id The page identifier
+     * @return true if page is in buffer pool
+     */
+    bool contains(const PageId& page_id) const;
+
+    /**
+     * Get current size (number of pages in buffer)
+     */
+    size_t size() const;
+
+    /**
+     * Get maximum capacity
+     */
+    size_t capacity() const { return max_pages_; }
+
+    /**
+     * Get hit rate
+     */
+    double hit_rate() const;
 
 private:
-    // extensible hashing structures
-    struct Bucket
-    {
-        std::vector<Page> pages;
-        int local_depth = 0;
-        size_t bucket_id;  // debug member
+    // Simple frame structure
+    struct Frame {
+        PageId id;
+        Page page;
+        bool dirty = false;
+        bool pinned = false;
+        bool referenced = false;  // For Clock algorithm
 
-        explicit Bucket(size_t id, int depth = 0) : local_depth(depth), bucket_id(id) {}
-
-        bool contains(const PageId& page_id) const;
-        Page* find_page(const PageId& page_id);
-        const Page* find_page(const PageId& page_id) const;
-        bool is_full(size_t capacity) const { return pages.size() >= capacity; }
-        size_t size() const { return pages.size(); }
+        Frame() = default;
+        explicit Frame(const PageId& id) : id(id) {}
     };
 
-    struct LRUEntry
-    {
-        Page* page;
-        std::shared_ptr<Bucket> bucket;
-        size_t bucket_idx;
+    // Private methods
+    Frame* find_frame(const PageId& page_id);
+    Frame* allocate_frame(const PageId& page_id);
+    bool evict_one_frame();
 
-        LRUEntry(Page* p, std::shared_ptr<Bucket> b, const size_t idx)
-            : page(p), bucket(std::move(b)), bucket_idx(idx) {}
+    // Eviction policy implementations
+    void lru_access(Frame* frame);
+    void lru_evict();
+    void clock_evict();
+
+    // Hash function using std::hash
+    size_t hash(const PageId& page_id) const;
+
+    // Load page from disk
+    bool load_page(Frame* frame, DirectIO* file);
+
+    // Write page to disk
+    bool write_page(Frame* frame, DirectIO* file);
+
+    // Simple chaining for hash table collisions
+    struct HashEntry {
+        Frame* frame;
+        HashEntry* next = nullptr;
+
+        HashEntry(Frame* f) : frame(f) {}
     };
 
-    size_t hash_page_id(const PageId& page_id) const;
-    size_t get_directory_index(size_t hash, int depth) const;
-    size_t get_directory_index(const PageId& page_id) const;
+    // Members
+    std::vector<HashEntry*> hash_table_;
+    std::vector<Frame> frames_;           // All frames allocated contiguously
+    std::vector<size_t> free_frames_;     // Indices of free frames
 
-    // Page management
-    Page* find_page_in_pool(const PageId& page_id);
-    Page* load_page_from_disk(const PageId& page_id);
-    void evict_page();
-
-    // bucket management
-    std::shared_ptr<Bucket> get_bucket_for_page(const PageId& page_id);
-    void split_bucket(size_t bucket_idx);
-    void maybe_split_bucket(size_t bucket_idx);
-    void expand_directory();
-    void update_directory_pointers(size_t old_idx, size_t new_idx, std::shared_ptr<Bucket> new_bucket);
-
-    // lru management
-    void update_lru(Page* page, std::shared_ptr<Bucket> bucket, size_t bucket_idx);
-    void remove_from_lru(Page* page);
-    Page* find_lru_victim();
-
-    // io ops
-    bool read_page_from_disk(const PageId& page_id, Page& page);
-    bool write_page_to_disk(Page& page);
-    std::unique_ptr<DirectIO> get_file_handle(const std::string& filename, bool read_only = true);
-
-    // debug log
-    void log_debug(const std::string& message) const;
-
-    Config config_;
-
-    // extensible hashing directory
-    std::vector<std::shared_ptr<Bucket>> directory_;
-    int global_depth_ = 0;
-    size_t next_bucket_id_ = 0;
-
-    // LRU list
-    std::list<LRUEntry> lru_list_;
-    std::unordered_map<Page*, std::list<LRUEntry>::iterator> lru_map_;
-
-    mutable std::mutex files_mutex_;
-    std::unordered_map<std::string, std::unique_ptr<DirectIO>> open_files_;
+    // LRU list - store indices into frames_ vector
+    std::list<size_t> lru_list_;
 
     // Statistics
     mutable std::mutex stats_mutex_;
-    BufferPoolStats stats_;
+    Stats stats_;
 
-    // sync
-    mutable std::shared_mutex directory_mutex_;
+    // Configuration
+    size_t max_pages_;
+    bool use_lru_;
 
-    // find page in all buckets helper
-    std::unordered_map<PageId, std::pair<std::shared_ptr<Bucket>, size_t>, PageIdHash> page_to_bucket_map_;
+    // For thread safety
+    mutable std::mutex pool_mutex_;
 };
 
-#endif //KVDB_BUFFERPOOL_H
+#endif // KVDB_BUFFERPOOL_H

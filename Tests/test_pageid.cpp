@@ -18,8 +18,6 @@ void print_test_result_pageid(const std::string& test_name, bool passed) {
 
 // Test 1: Basic construction
 bool test_pageid_basic_construction() {
-    std::cout << "Testing PageId basic construction..." << std::endl;
-
     PageId id1("test.dat", 0);
     if (id1.get_filename() != "test.dat" || id1.get_offset() != 0) {
         std::cerr << "  Construction failed for (test.dat, 0)" << std::endl;
@@ -51,8 +49,6 @@ bool test_pageid_basic_construction() {
 
 // Test 2: Comparison operators
 bool test_pageid_comparisons() {
-    std::cout << "Testing PageId comparison operators..." << std::endl;
-
     PageId id1("a.dat", 0);
     PageId id2("a.dat", 4096);
     PageId id3("b.dat", 0);
@@ -90,8 +86,6 @@ bool test_pageid_comparisons() {
 
 // Test 3: Hash function
 bool test_pageid_hash() {
-    std::cout << "Testing PageId hash function..." << std::endl;
-
     PageId id1("test.dat", 0);
     PageId id2("test.dat", 4096);
     PageId id3("test.dat", 0);  // Same as id1
@@ -136,8 +130,6 @@ bool test_pageid_hash() {
 
 // Test 4: String representation
 bool test_pageid_to_string() {
-    std::cout << "Testing PageId string representation..." << std::endl;
-
     PageId id1("test.dat", 0);
     PageId id2("path/to/file.sst", 8192);
 
@@ -163,8 +155,6 @@ bool test_pageid_to_string() {
 
 // Test 5: Copy and move semantics
 bool test_pageid_copy_move() {
-    std::cout << "Testing PageId copy and move semantics..." << std::endl;
-
     // Copy constructor
     PageId original("test.dat", 4096);
     PageId copy = original;

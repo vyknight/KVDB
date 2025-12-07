@@ -421,26 +421,41 @@ std::string SSTableReader::read_value_with_buffer_pool(const KeyEntry& entry) co
 {
     if (!buffer_pool_)
     {
-        // use non buffered reads
         return read_value(entry);
     }
 
-    // calculate the page that would contain this value
+    // Calculate page info
     uint64_t page_offset = (entry.value_offset / Page::PAGE_SIZE) * Page::PAGE_SIZE;
     uint64_t offset_in_page = entry.value_offset - page_offset;
+    PageId page_id(filename_, page_offset);
 
-    // Get page from buffer pool
-    Page* page = buffer_pool_->get_page(filename_, page_offset);
-    if (!page) {
-        throw std::runtime_error("Failed to get page from buffer pool");
+    // Try to get page from buffer pool first (without DirectIO)
+    Page* page = buffer_pool_->get_page(page_id, nullptr);
+
+    if (page) {
+        // Page is in buffer - use it
+        std::string value(entry.value_length, '\0');
+        page->copy_to(&value[0], entry.value_length, offset_in_page);
+        buffer_pool_->unpin_page(page_id);
+        return value;
     }
 
-    // Extract value from page
+    // Page not in buffer - open DirectIO and load it
+    auto direct_io = DirectIO::open(filename_, true);
+    if (!direct_io || !direct_io->is_open()) {
+        return read_value(entry); // fallback
+    }
+
+    // Now get page with DirectIO (will load from disk)
+    page = buffer_pool_->get_page(page_id, direct_io.get());
+
+    if (!page) {
+        return read_value(entry); // fallback
+    }
+
     std::string value(entry.value_length, '\0');
     page->copy_to(&value[0], entry.value_length, offset_in_page);
-
-    // Release page (decrement pin count)
-    buffer_pool_->release_page(page);
+    buffer_pool_->unpin_page(page_id);
 
     return value;
 }

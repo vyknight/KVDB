@@ -15,13 +15,13 @@
 
 void run_tests()
 {
-    // memtable_tests_main();
-    // sstable_writer_tests_main();
-    // sstable_reader_tests_main();
-    // wal_tests_main();
-    // kvstore_tests_main();
-    // pageid_tests_main();
-    // page_tests_main();
+    memtable_tests_main();
+    sstable_writer_tests_main();
+    sstable_reader_tests_main();
+    wal_tests_main();
+    kvstore_tests_main();
+    pageid_tests_main();
+    page_tests_main();
     directio_tests_main();
-    // bufferpool_tests_main();
+    bufferpool_tests_main();
 }
