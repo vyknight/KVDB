@@ -6,6 +6,7 @@
 #include <ctime>
 #include <vector>
 #include <cstring>
+#include <stdexcept>
 
 class Page {
 public:
