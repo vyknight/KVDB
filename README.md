@@ -118,6 +118,8 @@ complete any bonus objectives at the time of this report.
 I should note that I've experienced some issues with the scanning in which the top range of scans seem exclusive
 rather than inclusive because of nuances of lexicographical order.
 
+One final note is that I developed this project over MacOS, as such I wasn't able to implement DirectIO for experiments.
+
 ## Testing
 
 You will find an extensive suite of unit tests in the `/Tests` directory, I've made them after completing each class to

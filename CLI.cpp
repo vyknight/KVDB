@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <memory>
 #include <cstdlib>
+#include <random>
 
 namespace fs = std::filesystem;
 
@@ -445,74 +446,215 @@ void CLI::run_benchmark(std::istringstream& iss) {
         return;
     }
 
-    int num_ops = 1000;
-    int key_size = 10;
-    int value_size = 100;
+    // Experiment parameters from requirements
+    const size_t TOTAL_DATA_SIZE = 1 * 1024 * 1024 * 1024; // 1 GB
+    const size_t BUFFER_POOL_SIZE = 10 * 1024 * 1024;      // 10 MB
+    const int FILTER_BITS_PER_ENTRY = 8;                   // 8 bits
+    const size_t MEMTABLE_SIZE = 1 * 1024 * 1024;         // 1 MB
 
-    iss >> num_ops >> key_size >> value_size;
+    // Benchmark parameters
+    int key_size = 16;     // Default 16 bytes for keys
+    int value_size = 1024; // Default 1 KB values
+    int interval_mb = 100; // Measure every 100 MB
+    std::string output_csv = "benchmark_results.csv";
 
-    if (num_ops <= 0) num_ops = 1000;
-    if (key_size <= 0) key_size = 10;
-    if (value_size <= 0) value_size = 100;
+    // Parse additional parameters if provided
+    iss >> key_size >> value_size >> interval_mb >> output_csv;
 
-    std::cout << "\n=== Running Benchmark ===\n";
-    std::cout << "Operations: " << num_ops << "\n";
+    if (key_size <= 0) key_size = 16;
+    if (value_size <= 0) value_size = 1024;
+    if (interval_mb <= 0) interval_mb = 100;
+
+    // Calculate number of entries based on data size
+    size_t entry_size = key_size + value_size;
+    size_t total_entries = TOTAL_DATA_SIZE / entry_size;
+    size_t interval_entries = (interval_mb * 1024 * 1024) / entry_size;
+    size_t num_intervals = total_entries / interval_entries;
+
+    std::cout << "\n=== Running Experiment ===\n";
+    std::cout << "Total data size: 1 GB (" << total_entries << " entries)\n";
     std::cout << "Key size: " << key_size << " bytes\n";
-    std::cout << "Value size: " << value_size << " bytes\n\n";
+    std::cout << "Value size: " << value_size << " bytes\n";
+    std::cout << "Buffer pool: " << BUFFER_POOL_SIZE / (1024*1024) << " MB\n";
+    std::cout << "Filter bits per entry: " << FILTER_BITS_PER_ENTRY << "\n";
+    std::cout << "Memtable size: " << MEMTABLE_SIZE / (1024*1024) << " MB\n";
+    std::cout << "Measurement interval: " << interval_mb << " MB ("
+              << interval_entries << " entries)\n";
+    std::cout << "Output CSV: " << output_csv << "\n\n";
 
-    // Prepare test data
+    // Open CSV file for writing
+    std::ofstream csv_file(output_csv);
+    if (!csv_file.is_open()) {
+        std::cout << "Error: Could not open CSV file for writing\n";
+        return;
+    }
+
+    // Write CSV header
+    csv_file << "interval,cumulative_data_mb,insert_throughput_ops_sec,"
+             << "get_throughput_ops_sec,scan_throughput_ops_sec,"
+             << "cumulative_entries,time_elapsed_ms\n";
+
+    // Prepare test data for the entire experiment
+    std::cout << "Generating test data...\n";
     std::vector<std::string> keys;
     std::vector<std::string> values;
 
-    std::cout << "Generating test data...\n";
-    for (int i = 0; i < num_ops; i++) {
-        keys.push_back(generate_random_string(key_size));
-        values.push_back(generate_random_string(value_size));
+    // Use sequential keys for better scan performance measurement
+    for (size_t i = 0; i < total_entries; i++) {
+        std::string key = std::to_string(i);
+        // Pad key to required size
+        key.resize(key_size, '0');
+        keys.push_back(key);
+
+        // Generate random value
+        std::string value = generate_random_string(value_size);
+        values.push_back(value);
     }
 
-    // Benchmark PUT operations
-    std::cout << "\n1. PUT Operations:\n";
-    auto put_start = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < num_ops; i++) {
-        db_->put(keys[i], values[i]);
+    // Shuffle keys/values to simulate random insertion pattern
+    std::random_device rd;
+    std::mt19937 g(rd());
+    std::vector<size_t> indices(total_entries);
+    std::iota(indices.begin(), indices.end(), 0);
+    std::shuffle(indices.begin(), indices.end(), g);
+
+    // Reorder keys and values according to shuffled indices
+    std::vector<std::string> shuffled_keys(total_entries);
+    std::vector<std::string> shuffled_values(total_entries);
+    for (size_t i = 0; i < total_entries; i++) {
+        shuffled_keys[i] = keys[indices[i]];
+        shuffled_values[i] = values[indices[i]];
     }
-    auto put_end = std::chrono::high_resolution_clock::now();
-    auto put_duration = std::chrono::duration_cast<std::chrono::milliseconds>(put_end - put_start);
 
-    std::cout << "  Time: " << put_duration.count() << "ms\n";
-    std::cout << "  Throughput: " << (num_ops * 1000.0 / put_duration.count()) << " ops/sec\n";
+    // Main experiment loop
+    std::cout << "\nStarting experiment...\n";
+    auto experiment_start = std::chrono::high_resolution_clock::now();
 
-    // Benchmark GET operations
-    std::cout << "\n2. GET Operations:\n";
-    auto get_start = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < num_ops; i++) {
-        db_->get(keys[i]);
+    for (size_t interval = 0; interval < num_intervals; interval++) {
+        size_t start_idx = interval * interval_entries;
+        size_t end_idx = std::min(start_idx + interval_entries, total_entries);
+
+        std::cout << "\n=== Interval " << interval + 1 << "/" << num_intervals
+                  << " (" << (end_idx - start_idx) << " entries) ===\n";
+
+        // 1. INSERT operations for this interval
+        auto insert_start = std::chrono::high_resolution_clock::now();
+        for (size_t i = start_idx; i < end_idx; i++) {
+            db_->put(shuffled_keys[i], shuffled_values[i]);
+        }
+        auto insert_end = std::chrono::high_resolution_clock::now();
+        auto insert_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            insert_end - insert_start);
+
+        double insert_throughput = (end_idx - start_idx) * 1000.0 / insert_duration.count();
+        std::cout << "Insert: " << insert_duration.count() << "ms, "
+                  << std::fixed << std::setprecision(2) << insert_throughput << " ops/sec\n";
+
+        // 2. GET operations benchmark
+        // Sample 1000 random keys from all inserted data so far
+        const size_t sample_size = 1000;
+        std::vector<std::string> get_keys;
+
+        std::uniform_int_distribution<size_t> dist(0, end_idx - 1);
+        for (size_t i = 0; i < sample_size; i++) {
+            size_t random_idx = dist(g);
+            get_keys.push_back(shuffled_keys[random_idx]);
+        }
+
+        auto get_start = std::chrono::high_resolution_clock::now();
+        for (const auto& key : get_keys) {
+            db_->get(key);
+        }
+        auto get_end = std::chrono::high_resolution_clock::now();
+        auto get_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            get_end - get_start);
+
+        double get_throughput = sample_size * 1000.0 / get_duration.count();
+        std::cout << "Get: " << get_duration.count() << "ms, "
+                  << std::fixed << std::setprecision(2) << get_throughput << " ops/sec\n";
+
+        // 3. SCAN operations benchmark
+        // Perform range scan (if supported by your database)
+        const size_t scan_size = 1000;
+        auto scan_start = std::chrono::high_resolution_clock::now();
+
+        db_->scan("a", "\uffff");
+
+        auto scan_end = std::chrono::high_resolution_clock::now();
+        auto scan_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            scan_end - scan_start);
+
+        double scan_throughput = scan_size * 1000.0 / scan_duration.count();
+        std::cout << "Scan: " << scan_duration.count() << "ms, "
+                  << std::fixed << std::setprecision(2) << scan_throughput << " ops/sec\n";
+
+        // Calculate cumulative metrics
+        size_t cumulative_data_mb = (end_idx * entry_size) / (1024 * 1024);
+        auto time_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::high_resolution_clock::now() - experiment_start);
+
+        // Write to CSV
+        csv_file << interval + 1 << ","
+                 << cumulative_data_mb << ","
+                 << insert_throughput << ","
+                 << get_throughput << ","
+                 << scan_throughput << ","
+                 << end_idx << ","
+                 << time_elapsed.count() << "\n";
+
+        csv_file.flush(); // Ensure data is written after each interval
+
+        // Optional: Show progress
+        if ((interval + 1) % 5 == 0) {
+            float progress = 100.0 * (interval + 1) / num_intervals;
+            std::cout << "\nProgress: " << std::fixed << std::setprecision(1)
+                      << progress << "% complete\n";
+        }
     }
-    auto get_end = std::chrono::high_resolution_clock::now();
-    auto get_duration = std::chrono::duration_cast<std::chrono::milliseconds>(get_end - get_start);
 
-    std::cout << "  Time: " << get_duration.count() << "ms\n";
-    std::cout << "  Throughput: " << (num_ops * 1000.0 / get_duration.count()) << " ops/sec\n";
+    // Final measurements after all data is inserted
+    std::cout << "\n=== Final Measurements (After 1GB Insertion) ===\n";
 
-    // Benchmark DELETE operations
-    std::cout << "\n3. DELETE Operations:\n";
-    auto del_start = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < num_ops; i++) {
-        db_->remove(keys[i]);
+    // Final GET benchmark
+    const size_t final_sample = 10000;
+    std::vector<std::string> final_get_keys;
+
+    std::uniform_int_distribution<size_t> final_dist(0, total_entries - 1);
+    for (size_t i = 0; i < final_sample; i++) {
+        size_t random_idx = final_dist(g);
+        final_get_keys.push_back(shuffled_keys[random_idx]);
     }
-    auto del_end = std::chrono::high_resolution_clock::now();
-    auto del_duration = std::chrono::duration_cast<std::chrono::milliseconds>(del_end - del_start);
 
-    std::cout << "  Time: " << del_duration.count() << "ms\n";
-    std::cout << "  Throughput: " << (num_ops * 1000.0 / del_duration.count()) << " ops/sec\n";
+    auto final_get_start = std::chrono::high_resolution_clock::now();
+    for (const auto& key : final_get_keys) {
+        db_->get(key);
+    }
+    auto final_get_end = std::chrono::high_resolution_clock::now();
+    auto final_get_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+        final_get_end - final_get_start);
 
-    // Final stats
-    std::cout << "\n=== Benchmark Complete ===\n";
-    std::cout << "Total time: " << (put_duration + get_duration + del_duration).count() << "ms\n";
+    double final_get_throughput = final_sample * 1000.0 / final_get_duration.count();
+    std::cout << "Final Get Throughput: " << std::fixed << std::setprecision(2)
+              << final_get_throughput << " ops/sec\n";
 
-    // Force flush to see final state
+    // Final experiment statistics
+    auto experiment_end = std::chrono::high_resolution_clock::now();
+    auto total_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+        experiment_end - experiment_start);
+
+    double avg_insert_throughput = total_entries * 1000.0 / total_duration.count();
+
+    std::cout << "\n=== Experiment Complete ===\n";
+    std::cout << "Total time: " << total_duration.count() / 1000.0 << " seconds\n";
+    std::cout << "Average insert throughput: " << std::fixed << std::setprecision(2)
+              << avg_insert_throughput << " ops/sec\n";
+    std::cout << "Results saved to: " << output_csv << "\n";
+
+    // Force flush and show stats
     db_->flush_memtable();
     show_stats();
+
+    csv_file.close();
 }
 
 void CLI::clear_screen() {
