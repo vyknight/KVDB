@@ -1,13 +1,16 @@
 #include <iostream>
 
 #include "Tests/test_runner.h"
+#include "CLI.h"
 
-int main()
+int main(int argc, char* argv[])
 {
-    std::cout << "Hello, World!" << std::endl;
-
-    std::cout << "Running tests" << std::endl;
-    run_tests();
+    if (argc < 2) {
+        return main_cli_wrapper();
+    } else {
+        std::cout << "Running tests" << std::endl;
+        run_tests();
+    }
 
     return 0;
 }

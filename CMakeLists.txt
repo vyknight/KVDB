@@ -49,4 +49,6 @@ add_executable(KVDB main.cpp
         Tests/test_compaction.h
         Tests/test_level_manager.cpp
         Tests/test_level_manager.h
+        CLI.cpp
+        CLI.h
 )
